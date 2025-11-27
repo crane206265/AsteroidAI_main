@@ -174,18 +174,6 @@ class QValueNet_CNN(nn.Module):
 
         return out
 
-# -------------------- Test Data Loading --------------------
-
-data2 = np.load("C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data/pole_axis_RL_data_batches/data_pole_axis_RL_preset_batch_filtered_2.npy")[1:]
-
-print("[Data shapes]")
-print("data2 shape : ", data2.shape)
-print("-"*20)
-
-#sample_idx = [508, 620, 639, 466, 862, 970, 582, 789, 828, 309]
-#test_img_idx = [2, 4, 5, 1, 8, 9, 3, 6, 7, 0]
-sample_idx = [867, 206, 998, 73, 1032, 740, 411, 624, 670, 204]
-test_img_idx = [7, 2, 8, 0, 9, 6, 3, 4, 5, 1]
 
 class RewardMapModifier():
     def __init__(self, extends=(0, 1), blur_coef=(5, 3)):
@@ -330,6 +318,7 @@ def display_all(target_maps, pred_maps, losses):
     #plt.show()
     plt.tight_layout()
     plt.savefig("C:/Users/dlgkr/Downloads/display_all_2.png", dpi=dpi)
+
 # -------------------- Loss Functions --------------------
 
 def processer(reward_map, propagation=(3, 1)):
@@ -351,7 +340,6 @@ def processer(reward_map, propagation=(3, 1)):
 
     return reward_map_prop
 
-
 # Loss Function
 def loss_fn(input, target):
     PI = 3.141592
@@ -366,21 +354,69 @@ def loss_fn(input, target):
     loss = np.sqrt(np.mean((input_prop-target_prop)**2))
     return loss
 
+# -------------------- Similarity Functions --------------------
 # Similarity Function
-def MSE_Roll_r_sim(target_img, ref_img):
+def MSE_Roll_r_sim(pred_img, target_img):
+    """
+    ## MSE_Roll_r_sim
+    **: calculate similiarity with MSE-based mechanism. Rolling the target image, select the minimum loss.**
+    
+    ### Input
+    - pred_img
+    - target_img
+
+    ### Output
+    - similarity
+    - roll_idx for similarity
+    """
+
     sims = np.zeros((40))
     for i in range(40):
-        target_img_roll = np.roll(target_img, i, axis=0)
-        sims[i] = np.sqrt(np.mean((target_img_roll - ref_img) ** 2))
+        pred_img_roll = np.roll(pred_img, i, axis=1)
+        sims[i] = np.sqrt(np.mean((pred_img_roll - target_img) ** 2))
     sims = sims * 100
 
+    return np.min(sims), np.argmin(sims)
 
-def plotter(state, reward_map0, reward_map, loss, idx):
+def simArrCal(r_arr, dataset, idx, self_sim=False):
+    """
+    ## simArrCal
+    **: calculate similiarity array for given r_arr and dataset**
+
+    ### Input
+    - r_arr : target r_arr for similairity calculation
+    - dataset : objective dataset - the function will calculate similairty btw r_arr(input) and r_arr's in this dataset
+    - params : (num, i)
+
+    ### Output
+    - similarity_arr : 1D array of similarities (for plotting histogram)
+        - len = (dataset.shape[0]//800)
+    """
+
+    similarity_arr = np.zeros((dataset.shape[0] // 800))
+    for j in tqdm(range(0, dataset.shape[0], 800)):
+        if self_sim and j // 800 == idx:
+            continue
+        r_arr_dataset = dataset[j, :800].reshape(40, 20).T
+        #lc_arr_dataset = dataset[j, 800:900]
+
+        mean0 = 5
+        r_arr = r_arr * mean0 / np.mean(r_arr)
+        r_arr_dataset = r_arr_dataset * mean0 / np.mean(r_arr_dataset)
+
+        similarity, roll_idx = MSE_Roll_r_sim(r_arr, r_arr_dataset)
+        similarity_arr[j // 800] = similarity
+    
+        #print(f"Sample Set {i}, Train Set {j//800}, Similarity: {similarity:.2f}, Roll Index: {roll_idx}")
+    return similarity_arr
+
+# -------------------- Plotting Functions --------------------
+
+def plotter(state, reward_map0, reward_map, loss, idx, sim=(False, None, False)):
     """
     ## Plotter
     **: Plots the result of the model, with monitoring informations.**
 
-    ----------
     ### Contents
     - ax1 - lightcurves
     - ax2 - Fourier Transforms of LCs
@@ -430,6 +466,16 @@ def plotter(state, reward_map0, reward_map, loss, idx):
     ax2.set_title("FFT of LC at idx " + str(idx))
     ax2.set_ylim(lim[0], lim[1])
 
+    # --------------- plot ax3 ---------------
+    # similarity_histogram
+    similarity_arr = simArrCal(r_arr, sim[1], idx, self_sim=sim[2]) if sim[0] else []
+    ax3.hist(similarity_arr, bins=np.linspace(0, 100, 51), color='orange', alpha=0.5, label='Similarity Histogram')
+    ax3.set_xticks(np.linspace(0, 100, 11))
+    ax3.set_xlabel('Similarity (MSE)')
+    ax3.set_ylabel('Frequency')
+    title = "Self-Similarity Histogram at idx="+str(idx) if sim[2] else "Similarity Histogram at idx="+str(idx)
+    ax3.set_title(title)
+
     # --------------- plot ax4 ---------------
     # r_arr
     r_arr_img = ax4.imshow(r_arr, vmax=8, vmin=12)
@@ -458,7 +504,7 @@ def plotter(state, reward_map0, reward_map, loss, idx):
     #plt.show()
     plt.savefig(save_path+"img{:03d}.png".format(idx))
     plt.close()
-    print("Filtered Percent {:.2f}%".format(100*filtered_num/total_num))
+    #print("Filtered Percent {:.2f}%".format(100*filtered_num/total_num))
     filtered_percents.append(100*filtered_num/total_num)
 
 def __rewardmapSetting(ax:plt.Axes, Etheta, Stheta):
@@ -480,26 +526,40 @@ model_path = "C:/Users/dlgkr/Downloads/train1122_1/100model.pt"
 
 base_path = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/"
 save_path = base_path + "data_analysis/testset_model_analysis_imgs/train1122_1/"
-data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/data_pole_axis_RL_preset_batch_filtered_3.npy"
+test_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/data_pole_axis_RL_preset_batch_filtered_3.npy"
 
-data2 = np.load(data_path)[1:]
+test_data = np.load(test_data_path)[1:]
 gc.collect()
 
+train_data_paths = ["data_pole_axis_RL_preset_batch_0.npy",
+                    "data_pole_axis_RL_preset_batch_1.npy",
+                    "data_pole_axis_RL_preset_batch_2.npy",
+                    "data_pole_axis_RL_preset_batch_filtered_4.npy"]
+train_data_list = []
+for data_name in train_data_paths[:]:
+    train_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/" + data_name
+    train_data_list.append(np.load(train_data_path)[1:])
+train_data = np.concatenate(train_data_list, axis=0)
+gc.collect()
+
+print("[Data shapes]")
+print("test_Data shape : ", test_data.shape)
+print("train_Data shape : ", train_data.shape)
+print("-"*20)
 
 np.random.seed(206265)
-sample_idx = list(np.random.randint(0, data2.shape[0]//800, 200))
-sample_idx = list(range(0, data2.shape[0]//800))
+sample_idx = list(np.random.randint(0, test_data.shape[0]//800, 20))
+#sample_idx = list(range(0, test_data.shape[0]//800))
 print("sample idx : [", end='')
 for idx in sample_idx:
     print(idx, end=' ')
 print("]")
-test_img_idx = list(range(len(sample_idx)))
 
 modifier0 = RewardMapModifier((0, 0), (3, 2))
 
-losses = np.zeros((len(test_img_idx)))
-pred_maps = np.zeros((len(test_img_idx), 20, 40))
-target_maps = np.zeros((len(test_img_idx), 20, 40))
+losses = np.zeros((len(sample_idx)))
+pred_maps = np.zeros((len(sample_idx), 20, 40))
+target_maps = np.zeros((len(sample_idx), 20, 40))
 
 model = load_model(model_path)
 gc.collect()
@@ -508,11 +568,9 @@ filtered_num = 0
 total_num = 0
 filtered_percents = []
 
-for num, i in tqdm(zip(test_img_idx[:], sample_idx[:])):
-    # num : test_img_idx
-    # i : idx in data2
-    state = data2[i*800, :1006]
-    target0 = data2[i*800:(i+1)*800, -2].reshape(40, 20).T
+for num, i in tqdm(enumerate(sample_idx[:])):
+    state = test_data[i*800, :1006]
+    target0 = test_data[i*800:(i+1)*800, -2].reshape(40, 20).T
     target, _ = modifier0.operation(np.expand_dims(target0, axis=-1), None, order=['extend_vert', 'extend_hori', 'blur'])
     target = target[:, :, 0]
     
@@ -533,4 +591,4 @@ for num, i in tqdm(zip(test_img_idx[:], sample_idx[:])):
             roll_loss[j, k] = loss_fn(np.roll(pred, (j, k), axis=(0, 1)), target)
 
     total_num += 1
-    plotter(state, target_maps[num, :, :], pred_maps[num, :, :], losses[num], i)
+    plotter(state, target_maps[num, :, :], pred_maps[num, :, :], losses[num], i, sim=(True, train_data, False))
