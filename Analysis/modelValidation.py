@@ -9,7 +9,6 @@ import gc
 import os
 
 
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -169,16 +168,9 @@ class QValueNet_CNN(nn.Module):
 
         fusion_feat = torch.cat((r_arr_feat, lc_target_feat, lc_pred_feat, info_feat, rl_feat), dim=1)
         out = self.head(fusion_feat)
-        #shift_out = self.shift_head(fusion_feat)
-
-        #self.x_shift = torch.unsqueeze(shift_out[..., 0], dim=1)
-        #self.y_shift = torch.unsqueeze(shift_out[..., 1], dim=1)
-
-        #out = self.shifter(out, dx=20*self.x_shift, dy=10*self.y_shift)
-
+        
         PI = 3.14159265358979
         out = 6 * 2 / PI * torch.atan(out/0.8) #out/0.8
-        #out = 7 * 2 / PI * torch.atan(1.5 * out)
 
         return out
 
@@ -360,37 +352,55 @@ def processer(reward_map, propagation=(3, 1)):
     return reward_map_prop
 
 
-#modified at 0927_1
+# Loss Function
 def loss_fn(input, target):
     PI = 3.141592
-    #input_reshaped = np.transpose(input.reshape(-1, 40, 20), (0, 2, 1))
-    #target_reshaped = np.transpose(target.reshape(-1, 40, 20), (0, 2, 1))
     input_reshaped = input.reshape(-1, 20, 40)
     target_reshaped = target.reshape(-1, 20, 40)
     input_reshaped = 3*(2/PI)*np.arctan(input_reshaped/2)
     target_reshaped = 3*(2/PI)*np.arctan(target_reshaped/2)
 
-    #input_prop = processer(input_reshaped)
-    #target_prop = processer(target_reshaped)
     input_prop = input_reshaped
     target_prop = target_reshaped
 
-    #eps = 0.3
-    #input_prop_pos = np.where(input_prop > 0, input_prop, 0)
-    #input_prop_neg = np.where(input_prop < 0, input_prop, 0)
-    #input_prop_final = input_prop_pos*3/(np.amax(input_prop_pos, axis=(1, 2))[:, None, None]+eps)
-    #input_prop_final = input_prop_final + input_prop_neg*3/(-np.amin(input_prop_neg, axis=(1, 2))[:, None, None]+eps)
-    
     loss = np.sqrt(np.mean((input_prop-target_prop)**2))
     return loss
 
+# Similarity Function
+def MSE_Roll_r_sim(target_img, ref_img):
+    sims = np.zeros((40))
+    for i in range(40):
+        target_img_roll = np.roll(target_img, i, axis=0)
+        sims[i] = np.sqrt(np.mean((target_img_roll - ref_img) ** 2))
+    sims = sims * 100
 
-def plotter(r_arr, lc_target, lc_pred, lc_info, reward_map0, reward_map, loss, idx):
+
+def plotter(state, reward_map0, reward_map, loss, idx):
+    """
+    ## Plotter
+    **: Plots the result of the model, with monitoring informations.**
+
+    ----------
+    ### Contents
+    - ax1 - lightcurves
+    - ax2 - Fourier Transforms of LCs
+    - ax3 - similarity histogram
+    - ax4 - r_arr
+    - ax5 - reward_map0
+    - ax6 - reward_map (predicted by the model)
+    """
+
     global save_path
+
+    r_arr = state[:800].reshape(40, 20).T
+    lc_target = state[800:900]
+    lc_pred = state[900:1000]
+    lc_info = state[1000:1006]
 
     fig = plt.figure(figsize=(14, 6), dpi=200)
     ax1 = fig.add_subplot(2, 3, 1)
     ax2 = fig.add_subplot(2, 3, 2)
+    ax3 = fig.add_subplot(2, 3, 3)
     ax4 = fig.add_subplot(2, 3, 4)
     ax5 = fig.add_subplot(2, 3, 5)
     ax6 = fig.add_subplot(2, 3, 6)
@@ -400,10 +410,14 @@ def plotter(r_arr, lc_target, lc_pred, lc_info, reward_map0, reward_map, loss, i
     Stheta = np.arccos(Sdir[-1]) * 20 / np.pi
     Etheta = np.arccos(Edir[-1]) * 20 / np.pi
 
+    # --------------- plot ax1 ---------------
+    # lightcurves
     ax1.plot(lc_pred, label="lc_pred", color='royalblue')
     ax1.plot(lc_target, label="lc_target", color='orangered', linestyle='dotted')
     ax1.set_title("Lightcurve at idx " + str(idx))
 
+    # --------------- plot ax2 ---------------
+    # Fourier Transforms of LCs
     fft_coef_zip_target = np.abs(np.fft.fft(lc_target))[1:lc_target.shape[0]//2+1]
     fft_coef_zip_target = np.log10(fft_coef_zip_target)
     fft_coef_zip_pred = np.abs(np.fft.fft(lc_pred))[1:lc_pred.shape[0]//2+1]
@@ -416,6 +430,8 @@ def plotter(r_arr, lc_target, lc_pred, lc_info, reward_map0, reward_map, loss, i
     ax2.set_title("FFT of LC at idx " + str(idx))
     ax2.set_ylim(lim[0], lim[1])
 
+    # --------------- plot ax4 ---------------
+    # r_arr
     r_arr_img = ax4.imshow(r_arr, vmax=8, vmin=12)
     ax4.set_title("R_arr at idx " + str(idx))
     plt.colorbar(r_arr_img, ax=ax4, shrink=0.75)
@@ -423,29 +439,20 @@ def plotter(r_arr, lc_target, lc_pred, lc_info, reward_map0, reward_map, loss, i
     ax4.plot([0, 39], [Etheta, Etheta], color='royalblue', label='Earth Direction', linewidth=2, linestyle='dashed')
     ax4.legend()
 
+    # --------------- plot ax5 ---------------
+    # reward_map0
     reward_map0_img = ax5.imshow(reward_map0, vmax=np.max(np.abs(reward_map0)), vmin=-np.max(np.abs(reward_map0)))#, vmax=6, vmin=-6)
     ax5.set_title("Reward_Map at idx " + str(idx) + "(loss="+str(int(loss*1000)/1000)+")")
     plt.colorbar(reward_map0_img, ax=ax5, shrink=0.75)
-    ax5.plot([0, 40*(modifier0.extends[1]+1)-1], [Etheta*(modifier0.extends[0]+1), Etheta*(modifier0.extends[0]+1)], color='royalblue', label='Earth Direction', linewidth=2, linestyle='dashed')
-    ax5.plot([0, 40*(modifier0.extends[1]+1)-1], [Stheta*(modifier0.extends[0]+1), Stheta*(modifier0.extends[0]+1)], color='orangered', label='Sun Direction', linewidth=2, linestyle='dashed')
-    ax5.plot([20*modifier0.extends[1], 20*modifier0.extends[1]+40], [10*modifier0.extends[0], 10*modifier0.extends[0]], color='gold', linewidth=0.8, linestyle='dotted')
-    ax5.plot([20*modifier0.extends[1], 20*modifier0.extends[1]+40], [10*modifier0.extends[0]+20, 10*modifier0.extends[0]+20], color='gold', linewidth=0.8, linestyle='dotted')
-    ax5.plot([20*modifier0.extends[1], 20*modifier0.extends[1]], [10*modifier0.extends[0], 10*modifier0.extends[0]+20], color='gold', linewidth=0.8, linestyle='dotted')
-    ax5.plot([20*modifier0.extends[1]+40, 20*modifier0.extends[1]+40], [10*modifier0.extends[0], 10*modifier0.extends[0]+20], color='gold', linewidth=0.8, linestyle='dotted')
-    ax5.set_xlim([0-0.5, 40-0.5])
-    ax5.set_ylim([20-0.5, 0-0.5])
+    __rewardmapSetting(ax=ax5, Etheta=Etheta, Stheta=Stheta)
 
+    # --------------- plot ax5 ---------------
+    # reward_map (predicted by model)
     reward_map_img = ax6.imshow(reward_map, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)))#, vmax=6, vmin=-6)
     ax6.set_title("Reward_Map at idx " + str(idx) + "(loss="+str(int(loss*1000)/1000)+")")
     plt.colorbar(reward_map_img, ax=ax6, shrink=0.75)
-    ax6.plot([0, 40*(modifier0.extends[1]+1)-1], [Etheta*(modifier0.extends[0]+1), Etheta*(modifier0.extends[0]+1)], color='royalblue', label='Earth Direction', linewidth=2, linestyle='dashed')
-    ax6.plot([0, 40*(modifier0.extends[1]+1)-1], [Stheta*(modifier0.extends[0]+1), Stheta*(modifier0.extends[0]+1)], color='orangered', label='Sun Direction', linewidth=2, linestyle='dashed')
-    ax6.plot([20*modifier0.extends[1], 20*modifier0.extends[1]+40], [10*modifier0.extends[0], 10*modifier0.extends[0]], color='gold', linewidth=0.8, linestyle='dotted')
-    ax6.plot([20*modifier0.extends[1], 20*modifier0.extends[1]+40], [10*modifier0.extends[0]+20, 10*modifier0.extends[0]+20], color='gold', linewidth=0.8, linestyle='dotted')
-    ax6.plot([20*modifier0.extends[1], 20*modifier0.extends[1]], [10*modifier0.extends[0], 10*modifier0.extends[0]+20], color='gold', linewidth=0.8, linestyle='dotted')
-    ax6.plot([20*modifier0.extends[1]+40, 20*modifier0.extends[1]+40], [10*modifier0.extends[0], 10*modifier0.extends[0]+20], color='gold', linewidth=0.8, linestyle='dotted')
-    ax6.set_xlim([0-0.5, 40-0.5])
-    ax6.set_ylim([20-0.5, 0-0.5])
+    __rewardmapSetting(ax=ax6, Etheta=Etheta, Stheta=Stheta)
+
 
     plt.tight_layout()
     #plt.show()
@@ -453,6 +460,19 @@ def plotter(r_arr, lc_target, lc_pred, lc_info, reward_map0, reward_map, loss, i
     plt.close()
     print("Filtered Percent {:.2f}%".format(100*filtered_num/total_num))
     filtered_percents.append(100*filtered_num/total_num)
+
+def __rewardmapSetting(ax:plt.Axes, Etheta, Stheta):
+    """
+    Draw optional informations for reward_map type plotting to ax
+    """
+    ax.plot([0, 40*(modifier0.extends[1]+1)-1], [Etheta*(modifier0.extends[0]+1), Etheta*(modifier0.extends[0]+1)], color='royalblue', label='Earth Direction', linewidth=2, linestyle='dashed')
+    ax.plot([0, 40*(modifier0.extends[1]+1)-1], [Stheta*(modifier0.extends[0]+1), Stheta*(modifier0.extends[0]+1)], color='orangered', label='Sun Direction', linewidth=2, linestyle='dashed')
+    ax.plot([20*modifier0.extends[1], 20*modifier0.extends[1]+40], [10*modifier0.extends[0], 10*modifier0.extends[0]], color='gold', linewidth=0.8, linestyle='dotted')
+    ax.plot([20*modifier0.extends[1], 20*modifier0.extends[1]+40], [10*modifier0.extends[0]+20, 10*modifier0.extends[0]+20], color='gold', linewidth=0.8, linestyle='dotted')
+    ax.plot([20*modifier0.extends[1], 20*modifier0.extends[1]], [10*modifier0.extends[0], 10*modifier0.extends[0]+20], color='gold', linewidth=0.8, linestyle='dotted')
+    ax.plot([20*modifier0.extends[1]+40, 20*modifier0.extends[1]+40], [10*modifier0.extends[0], 10*modifier0.extends[0]+20], color='gold', linewidth=0.8, linestyle='dotted')
+    ax.set_xlim([0-0.5, 40-0.5])
+    ax.set_ylim([20-0.5, 0-0.5])
 
 # -------------------- Main Analysis --------------------
 
@@ -513,23 +533,4 @@ for num, i in tqdm(zip(test_img_idx[:], sample_idx[:])):
             roll_loss[j, k] = loss_fn(np.roll(pred, (j, k), axis=(0, 1)), target)
 
     total_num += 1
-    plotter(state[:800].reshape(40, 20).T, state[800:900], state[900:1000], state[1000:1006], target_maps[num, :, :], pred_maps[num, :, :], losses[num], i)
-
-
-
-raise NotImplementedError
-#"""
-reward0_path = "c:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data/pole_axis_RL_data_batches/data_pole_axis_RL_preset_reward0.npy"
-passed_idx_path = "c:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data/pole_axis_RL_data_batches/data_pole_axis_RL_preset_passed_idx.npy"
-reward0 = np.load(reward0_path)
-passed_idx = np.load(passed_idx_path)
-print(reward0)
-print(passed_idx)
-print(data2.shape[0]//800)  
-#"""
-
-plt.plot(filtered_percents)
-plt.plot([0-10, len(filtered_percents)+10], [filtered_percents[-1], filtered_percents[-1]], color='lightgray', linestyle='-.')
-plt.ylabel("%")
-plt.ylim([15, 40])
-plt.show()      
+    plotter(state, target_maps[num, :, :], pred_maps[num, :, :], losses[num], i)
