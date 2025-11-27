@@ -4,7 +4,7 @@ import gc
 
 from multiprocessing import Pool, cpu_count
 
-from Envs import AstEnv, Runner
+from envs import AstEnv, Runner
 
 #################### Main Code for Reward Map Generating ####################
     # UPDATED : 25.11.19
