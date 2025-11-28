@@ -394,7 +394,8 @@ def simArrCal(r_arr, dataset, idx, self_sim=False):
     """
 
     similarity_arr = np.zeros((dataset.shape[0] // 800))
-    for j in tqdm(range(0, dataset.shape[0], 800)):
+    #for j in tqdm(range(0, dataset.shape[0], 800)):
+    for j in range(0, dataset.shape[0], 800):
         if self_sim and j // 800 == idx:
             continue
         r_arr_dataset = dataset[j, :800].reshape(40, 20).T
@@ -548,8 +549,8 @@ print("train_Data shape : ", train_data.shape)
 print("-"*20)
 
 np.random.seed(206265)
-sample_idx = list(np.random.randint(0, test_data.shape[0]//800, 20))
-#sample_idx = list(range(0, test_data.shape[0]//800))
+#sample_idx = list(np.random.randint(0, test_data.shape[0]//800, 20))
+sample_idx = list(range(0, test_data.shape[0]//800))
 print("sample idx : [", end='')
 for idx in sample_idx:
     print(idx, end=' ')
@@ -568,7 +569,7 @@ filtered_num = 0
 total_num = 0
 filtered_percents = []
 
-for num, i in tqdm(enumerate(sample_idx[:])):
+for num, i in tqdm(enumerate(sample_idx[:]), total=len(sample_idx)):
     state = test_data[i*800, :1006]
     target0 = test_data[i*800:(i+1)*800, -2].reshape(40, 20).T
     target, _ = modifier0.operation(np.expand_dims(target0, axis=-1), None, order=['extend_vert', 'extend_hori', 'blur'])
