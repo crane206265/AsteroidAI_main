@@ -386,7 +386,8 @@ def simArrCal(r_arr, dataset, idx, self_sim=False):
     ### Input
     - r_arr : target r_arr for similairity calculation
     - dataset : objective dataset - the function will calculate similairty btw r_arr(input) and r_arr's in this dataset
-    - params : (num, i)
+    - idx
+    - self_sim : set True if dataset contains r_arr (i.e. calculating self-similarity)
 
     ### Output
     - similarity_arr : 1D array of similarities (for plotting histogram)
@@ -491,14 +492,14 @@ def plotter(state, reward_map0, reward_map, loss, idx, sim=(False, None, False))
     reward_map0_img = ax5.imshow(reward_map0, vmax=np.max(np.abs(reward_map0)), vmin=-np.max(np.abs(reward_map0)))#, vmax=6, vmin=-6)
     ax5.set_title("Reward_Map at idx " + str(idx) + "(loss="+str(int(loss*1000)/1000)+")")
     plt.colorbar(reward_map0_img, ax=ax5, shrink=0.75)
-    __rewardmapSetting(ax=ax5, Etheta=Etheta, Stheta=Stheta)
+    _setRewardMapPlot(ax=ax5, Etheta=Etheta, Stheta=Stheta)
 
     # --------------- plot ax5 ---------------
     # reward_map (predicted by model)
     reward_map_img = ax6.imshow(reward_map, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)))#, vmax=6, vmin=-6)
     ax6.set_title("Reward_Map at idx " + str(idx) + "(loss="+str(int(loss*1000)/1000)+")")
     plt.colorbar(reward_map_img, ax=ax6, shrink=0.75)
-    __rewardmapSetting(ax=ax6, Etheta=Etheta, Stheta=Stheta)
+    _setRewardMapPlot(ax=ax6, Etheta=Etheta, Stheta=Stheta)
 
 
     plt.tight_layout()
@@ -508,7 +509,7 @@ def plotter(state, reward_map0, reward_map, loss, idx, sim=(False, None, False))
     #print("Filtered Percent {:.2f}%".format(100*filtered_num/total_num))
     filtered_percents.append(100*filtered_num/total_num)
 
-def __rewardmapSetting(ax:plt.Axes, Etheta, Stheta):
+def _setRewardMapPlot(ax:plt.Axes, Etheta, Stheta):
     """
     Draw optional informations for reward_map type plotting to ax
     """
