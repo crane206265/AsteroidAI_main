@@ -14,7 +14,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # -------------------- Model Setting --------------------
 
-class QValueNet_CNN(nn.Module):
+# Model Type-A
+# Using two independent lightcurve encoders
+class QValueNet_CNN_A(nn.Module):
     def __init__(self, input_dim, hidden_dim=512, activation=nn.ReLU, dropout=0.3):
         super().__init__()
 
@@ -174,6 +176,309 @@ class QValueNet_CNN(nn.Module):
 
         return out
 
+# Model Type-B
+# Using one 2-channel lightcurve encoder
+class QValueNet_CNN_B(nn.Module):
+    def __init__(self, input_dim, hidden_dim=512, activation=nn.ReLU, dropout=0.3):
+        super().__init__()
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.activation = activation
+
+        # R_arr encoders (input: [B, C, 40, 20])
+        self.r_arr_encoder1 = nn.Sequential(
+            nn.Conv2d(1, 8, (9, 5)),  # -> [B, 8, 40, 20] # 1 channel / assumed input is already done padding=1 #(1, 16, 3)
+            self.activation(),
+            nn.MaxPool2d(2)  # -> [B, 8, 20, 10]
+        )
+
+        self.r_arr_encoder2 = nn.Sequential(
+            nn.Conv2d(8, 16, (5, 3)),  # assumed input is already done padding=1 #(16, 32, 3)
+            self.activation(), # -> [B, 16, 20, 10]
+
+            # for preserving spatial structure, using size 1 kernal instead MLP
+            nn.Conv2d(16, 64, 1), # -> [B, 64, 20, 10]
+            self.activation(),
+            nn.AdaptiveAvgPool2d(1) # -> [B, 64, 1, 1]
+        )
+
+        # Info encoder (input: [B, 1, 6])
+        self.info_encoder = nn.Sequential(
+            nn.Linear(6, 32),
+            self.activation(),
+            nn.Linear(32, 64) # -> [B, 1, 64]
+        )
+
+        # RL encoder (input: [B, 1, 4])
+        self.rl_encoder = nn.Sequential(
+            nn.Linear(4, 32),
+            self.activation(),
+            nn.Linear(32, 64) # -> [B, 1, 64]
+        )
+
+        # Lightcurves encoder (input: [B, 2, 100])
+        self.lc_encoder1 = nn.Sequential(
+            nn.Conv1d(2, 16, kernel_size=15),
+            self.activation(),
+            nn.MaxPool1d(2),   # -> [B, 16, 50]
+        )
+
+        self.lc_encoder2 = nn.Sequential(
+            nn.Conv1d(16, 32, kernel_size=9),
+            self.activation(), # -> [B, 32, 50]
+
+            nn.Conv1d(32, 64, 1), # -> [B, 64, 50]
+            self.activation(),
+            nn.AdaptiveAvgPool1d(1) # -> [B, 64, 1]
+        )
+
+        # Fusion & Head
+        self.head = nn.Sequential(
+            nn.Linear(64 + 64 + 64 + 64, 1024),
+            self.activation(),
+            nn.Dropout(dropout),
+
+            nn.Linear(1024, 1024),
+            self.activation(),
+            nn.Dropout(dropout),
+
+            nn.Linear(1024, 256),
+            self.activation(),
+            nn.Dropout(dropout),
+
+            nn.Linear(256, 1)  # e.g., class count or regression value
+        )
+
+    def r_padding(self, x, pad=(1, 1)):
+        N, C, H, W = x.shape
+        pad_H = pad[0]
+        pad_W = pad[1]
+
+        out = torch.full((N, C, H + 2*pad_H, W + 2*pad_W), fill_value=0.0, dtype=x.dtype, device=x.device)
+        out[:, :, pad_H:pad_H+H, pad_W:pad_W+W] = x
+        out[:, :, :, :pad_W] = torch.roll(torch.flip(out[:, :, :, pad_W:pad_W+pad_W], (-2,)), 20, -1)
+        out[:, :, :, -pad_W:] = torch.roll(torch.flip(out[:, :, :, -pad_W-pad_W:-pad_W], (-2,)), 20, -1)
+        out[:, :, :pad_H, pad_W:pad_W+W] = x[:, :, -pad_H:, :]
+        out[:, :, -pad_H:, pad_W:pad_W+W] = x[:, :, :pad_H, :]
+        return out
+
+    def lc_padding(self, x, pad=1):
+        N, C, W = x.shape
+
+        out = torch.full((N, C, W + 2*pad), fill_value=0.0, dtype=x.dtype, device=x.device)
+        out[:, :, pad:pad+W] = x
+        out[:, :, :pad] = x[:, :, -pad:]
+        out[:, :, -pad:] = x[:, :, :pad]
+        return out
+
+    def shifter(self, img, dx=0, dy=0):
+        PI = 3.14159265358979
+        img_F = torch.fft.fft2(img)
+        N, M = img.shape
+        ky = torch.fft.fftfreq(N)[:, None].to(device)
+        kx = torch.fft.fftfreq(M)[None, :].to(device)
+        phase = torch.exp(-2j*PI*(kx*dx + ky*dy))
+        new_img = torch.fft.ifft2(img_F*phase)
+        return new_img.real
+
+    def forward(self, X):
+        r_arr = X[..., :800].reshape((X.shape[0], 1, 40, 20))
+        lc_target = X[..., 800:900].reshape((X.shape[0], 1, 100))
+        lc_pred = X[..., 900:1000].reshape((X.shape[0], 1, 100))
+        lc_info = X[..., 1000:1006]
+        rl_info = X[..., 1006:]
+
+        r_arr_feat = torch.transpose(r_arr, -2, -1)
+        r_arr_feat = self.r_padding(r_arr_feat, pad=(4, 2))
+        r_arr_feat = self.r_arr_encoder1(r_arr_feat)
+        r_arr_feat = self.r_padding(r_arr_feat, pad=(2, 1))
+        r_arr_feat = self.r_arr_encoder2(r_arr_feat)
+        r_arr_feat = torch.squeeze(r_arr_feat, dim=-1)
+        r_arr_feat = torch.squeeze(r_arr_feat, dim=-1)
+
+        lc = torch.cat([lc_target, lc_pred], dim=1)
+        lc_feat = self.lc_padding(lc, pad=7)          # [B, 2, 114]
+        lc_feat = self.lc_encoder1(lc_feat)           # [B, 16, 50]
+        lc_feat = self.lc_padding(lc_feat, pad=4)     # [B, 16, 58]
+        lc_feat = self.lc_encoder2(lc_feat)           # [B, 64, 1]
+        lc_feat = torch.squeeze(lc_feat, dim=-1)      # [B, 64]
+
+        info_feat = self.info_encoder(lc_info)
+        info_feat = torch.squeeze(info_feat, dim=1)
+
+        rl_feat = self.rl_encoder(rl_info)
+        rl_feat = torch.squeeze(rl_feat, dim=1)
+
+        fusion_feat = torch.cat((r_arr_feat, lc_feat, info_feat, rl_feat), dim=1)
+        out = self.head(fusion_feat)
+        #shift_out = self.shift_head(fusion_feat)
+
+        #self.x_shift = torch.unsqueeze(shift_out[..., 0], dim=1)
+        #self.y_shift = torch.unsqueeze(shift_out[..., 1], dim=1)
+
+        #out = self.shifter(out, dx=20*self.x_shift, dy=10*self.y_shift)
+
+        PI = 3.14159265358979
+        out = 6 * 2 / PI * torch.atan(out/0.8) #out/0.8
+        #out = 7 * 2 / PI * torch.atan(1.5 * out)
+
+        return out
+
+# Model Type-C
+# Using shared lightcurve encoder
+class QValueNet_CNN_C(nn.Module):
+    def __init__(self, input_dim, hidden_dim=512, activation=nn.ReLU, dropout=0.3):
+        super().__init__()
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.activation = activation
+
+        # R_arr encoders (input: [B, C, 40, 20])
+        self.r_arr_encoder1 = nn.Sequential(
+            nn.Conv2d(1, 8, (9, 5)),  # -> [B, 8, 40, 20] # 1 channel / assumed input is already done padding=1 #(1, 16, 3)
+            self.activation(),
+            nn.MaxPool2d(2)  # -> [B, 8, 20, 10]
+        )
+
+        self.r_arr_encoder2 = nn.Sequential(
+            nn.Conv2d(8, 16, (5, 3)),  # assumed input is already done padding=1 #(16, 32, 3)
+            self.activation(), # -> [B, 16, 20, 10]
+
+            # for preserving spatial structure, using size 1 kernal instead MLP
+            nn.Conv2d(16, 64, 1), # -> [B, 64, 20, 10]
+            self.activation(),
+            nn.AdaptiveAvgPool2d(1) # -> [B, 64, 1, 1]
+        )
+
+        # Info encoder (input: [B, 1, 6])
+        self.info_encoder = nn.Sequential(
+            nn.Linear(6, 32),
+            self.activation(),
+            nn.Linear(32, 64) # -> [B, 1, 64]
+        )
+
+        # RL encoder (input: [B, 1, 4])
+        self.rl_encoder = nn.Sequential(
+            nn.Linear(4, 32),
+            self.activation(),
+            nn.Linear(32, 64) # -> [B, 1, 64]
+        )
+
+        # Lightcurves encoder (input: [B, 1, 100])
+        self.lc_encoder1 = nn.Sequential(
+            nn.Conv1d(1, 16, kernel_size=15),
+            self.activation(),
+            nn.MaxPool1d(2),   # -> [B, 16, 50]
+        )
+
+        self.lc_encoder2 = nn.Sequential(
+            nn.Conv1d(16, 32, kernel_size=9),
+            self.activation(), # -> [B, 32, 50]
+
+            nn.Conv1d(32, 64, 1), # -> [B, 64, 50]
+            self.activation(),
+            nn.AdaptiveAvgPool1d(1) # -> [B, 64, 1]
+        )
+
+        # Fusion & Head
+        self.head = nn.Sequential(
+            nn.Linear(64 + 64 + 64 + 64 + 64, 1024),
+            self.activation(),
+            nn.Dropout(dropout),
+
+            nn.Linear(1024, 1024),
+            self.activation(),
+            nn.Dropout(dropout),
+
+            nn.Linear(1024, 256),
+            self.activation(),
+            nn.Dropout(dropout),
+
+            nn.Linear(256, 1)  # e.g., class count or regression value
+        )
+
+    def r_padding(self, x, pad=(1, 1)):
+        N, C, H, W = x.shape
+        pad_H = pad[0]
+        pad_W = pad[1]
+
+        out = torch.full((N, C, H + 2*pad_H, W + 2*pad_W), fill_value=0.0, dtype=x.dtype, device=x.device)
+        out[:, :, pad_H:pad_H+H, pad_W:pad_W+W] = x
+        out[:, :, :, :pad_W] = torch.roll(torch.flip(out[:, :, :, pad_W:pad_W+pad_W], (-2,)), 20, -1)
+        out[:, :, :, -pad_W:] = torch.roll(torch.flip(out[:, :, :, -pad_W-pad_W:-pad_W], (-2,)), 20, -1)
+        out[:, :, :pad_H, pad_W:pad_W+W] = x[:, :, -pad_H:, :]
+        out[:, :, -pad_H:, pad_W:pad_W+W] = x[:, :, :pad_H, :]
+        return out
+
+    def lc_padding(self, x, pad=1):
+        N, C, W = x.shape
+
+        out = torch.full((N, C, W + 2*pad), fill_value=0.0, dtype=x.dtype, device=x.device)
+        out[:, :, pad:pad+W] = x
+        out[:, :, :pad] = x[:, :, -pad:]
+        out[:, :, -pad:] = x[:, :, :pad]
+        return out
+
+    def shifter(self, img, dx=0, dy=0):
+        PI = 3.14159265358979
+        img_F = torch.fft.fft2(img)
+        N, M = img.shape
+        ky = torch.fft.fftfreq(N)[:, None].to(device)
+        kx = torch.fft.fftfreq(M)[None, :].to(device)
+        phase = torch.exp(-2j*PI*(kx*dx + ky*dy))
+        new_img = torch.fft.ifft2(img_F*phase)
+        return new_img.real
+
+    def forward(self, X):
+        r_arr = X[..., :800].reshape((X.shape[0], 1, 40, 20))
+        lc_target = X[..., 800:900].reshape((X.shape[0], 1, 100))
+        lc_pred = X[..., 900:1000].reshape((X.shape[0], 1, 100))
+        lc_info = X[..., 1000:1006]
+        rl_info = X[..., 1006:]
+
+        r_arr_feat = torch.transpose(r_arr, -2, -1)
+        r_arr_feat = self.r_padding(r_arr_feat, pad=(4, 2))
+        r_arr_feat = self.r_arr_encoder1(r_arr_feat)
+        r_arr_feat = self.r_padding(r_arr_feat, pad=(2, 1))
+        r_arr_feat = self.r_arr_encoder2(r_arr_feat)
+        r_arr_feat = torch.squeeze(r_arr_feat, dim=-1)
+        r_arr_feat = torch.squeeze(r_arr_feat, dim=-1)
+
+        lc_target_feat = self.lc_padding(lc_target, pad=7)
+        lc_target_feat = self.lc_encoder1(lc_target_feat)
+        lc_target_feat = self.lc_padding(lc_target_feat, pad=4)
+        lc_target_feat = self.lc_encoder2(lc_target_feat)
+        lc_target_feat = torch.squeeze(lc_target_feat, dim=-1)
+
+        lc_pred_feat = self.lc_padding(lc_pred, pad=7)
+        lc_pred_feat = self.lc_encoder1(lc_pred_feat)
+        lc_pred_feat = self.lc_padding(lc_pred_feat, pad=4)
+        lc_pred_feat = self.lc_encoder2(lc_pred_feat)
+        lc_pred_feat = torch.squeeze(lc_pred_feat, dim=-1)
+
+        info_feat = self.info_encoder(lc_info)
+        info_feat = torch.squeeze(info_feat, dim=1)
+
+        rl_feat = self.rl_encoder(rl_info)
+        rl_feat = torch.squeeze(rl_feat, dim=1)
+
+        fusion_feat = torch.cat((r_arr_feat, lc_target_feat, lc_pred_feat, info_feat, rl_feat), dim=1)
+        out = self.head(fusion_feat)
+        #shift_out = self.shift_head(fusion_feat)
+
+        #self.x_shift = torch.unsqueeze(shift_out[..., 0], dim=1)
+        #self.y_shift = torch.unsqueeze(shift_out[..., 1], dim=1)
+
+        #out = self.shifter(out, dx=20*self.x_shift, dy=10*self.y_shift)
+
+        PI = 3.14159265358979
+        out = 6 * 2 / PI * torch.atan(out/0.8) #out/0.8
+        #out = 7 * 2 / PI * torch.atan(1.5 * out)
+
+        return out
+
 
 class RewardMapModifier():
     def __init__(self, extends=(0, 1), blur_coef=(5, 3)):
@@ -269,8 +574,13 @@ def input_data(state):
     total_input = torch.concat(input_list, dim=0)
     return total_input
     
-def load_model(model_path):
-    model = QValueNet_CNN(input_dim=1010, hidden_dim=1024, activation=nn.ELU, dropout=0.15).to(device)
+def load_model(model_path, model_type):
+    if model_type == 'A':
+        model = QValueNet_CNN_A(input_dim=1010, hidden_dim=1024, activation=nn.ELU, dropout=0.15).to(device)
+    elif model_type == 'B':
+        model = QValueNet_CNN_B(input_dim=1010, hidden_dim=1024, activation=nn.ELU, dropout=0.15).to(device)
+    elif model_type == 'C':
+        model = QValueNet_CNN_C(input_dim=1010, hidden_dim=1024, activation=nn.ELU, dropout=0.15).to(device)
     #summary(model, (1, model.input_dim))
     checkpoint = torch.load(model_path, map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -524,10 +834,10 @@ def _setRewardMapPlot(ax:plt.Axes, Etheta, Stheta):
 
 # -------------------- Main Analysis --------------------
 
-model_path = "C:/Users/dlgkr/Downloads/train1122_1/100model.pt"
+model_path = "C:/Users/dlgkr/Downloads/train1129_1/50model.pt"
 
 base_path = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/"
-save_path = base_path + "data_analysis/testset_model_analysis_imgs/train1122_1/"
+save_path = base_path + "data_analysis/testset_model_analysis_imgs/train1129_1/"
 test_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/data_pole_axis_RL_preset_batch_filtered_3.npy"
 
 test_data = np.load(test_data_path)[1:]
@@ -563,7 +873,7 @@ losses = np.zeros((len(sample_idx)))
 pred_maps = np.zeros((len(sample_idx), 20, 40))
 target_maps = np.zeros((len(sample_idx), 20, 40))
 
-model = load_model(model_path)
+model = load_model(model_path, model_type='B')
 gc.collect()
 
 filtered_num = 0
