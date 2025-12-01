@@ -834,10 +834,10 @@ def _setRewardMapPlot(ax:plt.Axes, Etheta, Stheta):
 
 # -------------------- Main Analysis --------------------
 
-model_path = "C:/Users/dlgkr/Downloads/train1129_1/50model.pt"
+model_path = "C:/Users/dlgkr/Downloads/train1129_2/50model.pt"
 
 base_path = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/"
-save_path = base_path + "data_analysis/testset_model_analysis_imgs/train1129_1/"
+save_path = base_path + "data_analysis/testset_model_analysis_imgs/train1129_2/"
 test_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/data_pole_axis_RL_preset_batch_filtered_3.npy"
 
 test_data = np.load(test_data_path)[1:]
@@ -873,7 +873,7 @@ losses = np.zeros((len(sample_idx)))
 pred_maps = np.zeros((len(sample_idx), 20, 40))
 target_maps = np.zeros((len(sample_idx), 20, 40))
 
-model = load_model(model_path, model_type='B')
+model = load_model(model_path, model_type='C')
 gc.collect()
 
 filtered_num = 0
