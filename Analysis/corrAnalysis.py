@@ -174,13 +174,24 @@ def plotter(state, reward_map0, idx):
     # Fourier Transform of reward_map0 - arg values
     filter = np.zeros_like(rewardMapF)
     f = 3
+    #filter[0, :3] = 1
+    #filter[-1, :3] = 1
     filter[:f+1, :f] = 1
-    filter[-f:, -f:] = 1
+    filter[-f:, :f] = 1
     filterRewardMap = np.fft.irfft2(rewardMapF * filter)
     ax[1][2].imshow(filterRewardMap, vmax=np.max(np.abs(filterRewardMap)), vmin=-np.max(np.abs(filterRewardMap)))
 
+    arg1 = np.average(a=rewardMapF_arg.reshape(-1)[1:], weights=2*rewardMapF_mag.reshape(-1)[1:])
+    print("{:.4f}".format(arg1))
+    arg2 = np.average(a=rewardMapF_arg.reshape(-1)[1:], weights=(2*rewardMapF_mag*filter).reshape(-1)[1:])
+    print("{:.4f}".format(arg2))
 
-
+    # --------------- plot ax[2][2] ---------------
+    # Fourier Transform of reward_map0 - arg values
+    newF = np.zeros_like(rewardMapF)
+    newF[0, 2] = np.exp(1j*rewardMapF_arg[0, 2]*2)
+    filterRewardMap0 = np.fft.irfft2(newF)
+    ax[2][2].imshow(filterRewardMap0, vmax=np.max(np.abs(filterRewardMap0)), vmin=-np.max(np.abs(filterRewardMap0)))
 
     plt.show()
 
