@@ -182,18 +182,47 @@ def plotter(state, reward_map0, idx):
     ax[1][2].imshow(filterRewardMap, vmax=np.max(np.abs(filterRewardMap)), vmin=-np.max(np.abs(filterRewardMap)))
 
     arg1 = np.average(a=rewardMapF_arg.reshape(-1)[1:], weights=2*rewardMapF_mag.reshape(-1)[1:])
-    print("{:.4f}".format(arg1))
-    arg2 = np.average(a=rewardMapF_arg.reshape(-1)[1:], weights=(2*rewardMapF_mag*filter).reshape(-1)[1:])
+    print("\n{:.4f}".format(arg1))
+    arg2 = np.real(np.average(a=rewardMapF_arg.reshape(-1)[1:], weights=(2*rewardMapF_mag*filter).reshape(-1)[1:]))
     print("{:.4f}".format(arg2))
+    arg3 = np.average(a=rewardMapF_arg[:, 2], weights=rewardMapF_mag[:, 2])
+    print("{:.4f}".format(arg3))
+    arg4 = rewardMapF_arg[0, 2]
+    print("{:.4f}".format(arg4))
 
     # --------------- plot ax[2][2] ---------------
     # Fourier Transform of reward_map0 - arg values
     newF = np.zeros_like(rewardMapF)
-    newF[0, 2] = np.exp(1j*rewardMapF_arg[0, 2]*2)
+    newF[0, 2] = np.exp(1j*arg3*2)
     filterRewardMap0 = np.fft.irfft2(newF)
     ax[2][2].imshow(filterRewardMap0, vmax=np.max(np.abs(filterRewardMap0)), vmin=-np.max(np.abs(filterRewardMap0)))
 
     plt.show()
+
+def scatter(states, target_maps):
+    r_arr = np.transpose(states[:, :800].reshape(-1, 40, 20), (0, 2, 1))
+    lc_target = states[:, 800:900]
+    lc_pred = states[:, 900:1000]
+    lc_info = states[:, 1000:1006]
+
+    EPS = 3e-1
+    zero_idxs = np.argwhere(np.abs(lc_pred-lc_target) < EPS)
+    print(zero_idxs)
+    print(zero_idxs.shape)
+
+    points = []
+    for i in range(target_maps.shape[0]):
+        rewardMapF = np.fft.rfft2(target_maps[i])
+        rewardMapF_mag = np.abs(rewardMapF)
+        rewardMapF_arg = np.angle(rewardMapF)
+        arg3 = np.average(a=rewardMapF_arg[:, 2], weights=rewardMapF_mag[:, 2])
+        for zero_idx in zero_idxs:
+            if zero_idx[0] == i:
+                points.append(np.array([zero_idx[1], arg3]))
+    points = np.array(points)
+    plt.scatter(points[:, 0], points[:, 1])
+    plt.show()
+    
 
 def _quaterLine(ax:plt.Axes, xlim, ylim):
     quaters = [(xlim[1] - xlim[0])*i/4 for i in range(1,4)]
@@ -241,7 +270,7 @@ print("train_Data shape : ", train_data.shape)
 print("-"*20)
 
 np.random.seed(206265)
-sample_idx = list(np.random.randint(0, test_data.shape[0]//800, 10))
+sample_idx = sorted(list(np.random.randint(0, test_data.shape[0]//800, 100)))
 #sample_idx = list(range(0, test_data.shape[0]//800))
 print("sample idx : [", end='')
 for idx in sample_idx:
@@ -269,4 +298,7 @@ for num, i in tqdm(enumerate(sample_idx[:]), total=len(sample_idx)):
     target_maps[num, :, :] = target.copy()
 
     total_num += 1
-    plotter(state, target_maps[num, :, :], i)
+    #plotter(state, target_maps[num, :, :], i)
+
+states = test_data[np.array(sample_idx)*800, :1006]
+scatter(states, target_maps)
