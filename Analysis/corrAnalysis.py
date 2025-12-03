@@ -85,18 +85,13 @@ class RewardMapModifier():
         return (N_set[0]+2*int(N_set[0]*self.extends[1]/2), N_set[1]+2*int(N_set[1]*self.extends[0]/2))
 
 
-def plotter(state, reward_map0, reward_map, idx, sim=(False, None, False)):
+def plotter(state, reward_map0, idx):
     """
     ## Plotter
     **: Plots the result of the model, with monitoring informations.**
 
     ### Contents
-    - ax1 - lightcurves
-    - ax2 - Fourier Transforms of LCs
-    - ax3 - similarity histogram
-    - ax4 - r_arr
-    - ax5 - reward_map0
-    - ax6 - reward_map (predicted by the model)
+
     """
 
     r_arr = state[:800].reshape(40, 20).T
@@ -118,7 +113,7 @@ def plotter(state, reward_map0, reward_map, idx, sim=(False, None, False)):
     ax[0][0].plot(lc_target, label="lc_target", color='orangered', linestyle='dotted')
     ax[0][0].set_title("Lightcurve at idx " + str(idx))
     ax[0][0].legend()
-    quaterLine(ax=ax[0][0], xlim=[0, len(lc_pred)], ylim=ax[0][0].set_ylim())
+    _quaterLine(ax=ax[0][0], xlim=[0, len(lc_pred)], ylim=ax[0][0].set_ylim())
 
     # --------------- plot ax[1][0] ---------------
     # Fourier Transforms of LCs
@@ -135,19 +130,57 @@ def plotter(state, reward_map0, reward_map, idx, sim=(False, None, False)):
     ax[1][0].set_ylim(lim[0], lim[1])
 
     # --------------- plot ax[2][0] ---------------
-
+    # lc_pred - lc_target
     ax[2][0].plot(lc_pred-lc_target, label=r"$\Delta LC$", color='royalblue')
     ax[2][0].set_title(r"$\Delta LC$ at idx " + str(idx))
     ax[2][0].legend()
-    quaterLine(ax=ax[2][0], xlim=[0, len(lc_pred)], ylim=ax[2][0].set_ylim())
+    _quaterLine(ax=ax[2][0], xlim=[0, len(lc_pred)], ylim=ax[2][0].set_ylim())
     ax[2][0].plot(ax[2][0].set_xlim(), [0, 0], color='gray', linestyle='dotted', alpha=0.4)
+
+    # --------------- plot ax[0][1] ---------------
+    # reward_map0
+    reward_map0_img = ax[0][1].imshow(reward_map0, vmax=np.max(np.abs(reward_map0)), vmin=-np.max(np.abs(reward_map0)))#, vmax=6, vmin=-6)
+    ax[0][1].set_title("Reward_Map at idx " + str(idx))
+    #plt.colorbar(reward_map0_img, ax=ax[][], shrink=0.75)#, orientation='horizontal')
+    _setRewardMapPlot(ax=ax[0][1], Etheta=Etheta, Stheta=Stheta)
+
+    #rewardMapF = np.fft.fftshift(np.fft.fft2(reward_map0))
+    rewardMapF = np.fft.rfft2(reward_map0)
+    rewardMapF_mag = np.abs(rewardMapF)
+    rewardMapF_arg = np.angle(rewardMapF)
+
+    # --------------- plot ax[1][1] ---------------
+    # Fourier Transform of reward_map0 - abs values
+    ax[1][1].imshow(np.log10(rewardMapF_mag))
+    ax[1][1].set_title("F.T. of reward_map0 (abs)")
+
+    # --------------- plot ax[2][1] ---------------
+    # Fourier Transform of reward_map0 - arg values
+    ax[2][1].imshow(rewardMapF_arg)
+    ax[2][1].set_title("F.T. of reward_map0 (arg)")
+
+
+
 
     plt.show()
 
-def quaterLine(ax, xlim, ylim):
+def _quaterLine(ax:plt.Axes, xlim, ylim):
     quaters = [(xlim[1] - xlim[0])*i/4 for i in range(1,4)]
     for x in quaters:
         ax.plot((x, x), ylim, color='gray', linestyle='dotted', alpha=0.4)
+
+def _setRewardMapPlot(ax:plt.Axes, Etheta, Stheta):
+    """
+    Draw optional informations for reward_map type plotting to ax
+    """
+    ax.plot([0, 40*(modifier0.extends[1]+1)-1], [Etheta*(modifier0.extends[0]+1), Etheta*(modifier0.extends[0]+1)], color='royalblue', label='Earth Direction', linewidth=2, linestyle='dashed')
+    ax.plot([0, 40*(modifier0.extends[1]+1)-1], [Stheta*(modifier0.extends[0]+1), Stheta*(modifier0.extends[0]+1)], color='orangered', label='Sun Direction', linewidth=2, linestyle='dashed')
+    ax.plot([20*modifier0.extends[1], 20*modifier0.extends[1]+40], [10*modifier0.extends[0], 10*modifier0.extends[0]], color='gold', linewidth=0.8, linestyle='dotted')
+    ax.plot([20*modifier0.extends[1], 20*modifier0.extends[1]+40], [10*modifier0.extends[0]+20, 10*modifier0.extends[0]+20], color='gold', linewidth=0.8, linestyle='dotted')
+    ax.plot([20*modifier0.extends[1], 20*modifier0.extends[1]], [10*modifier0.extends[0], 10*modifier0.extends[0]+20], color='gold', linewidth=0.8, linestyle='dotted')
+    ax.plot([20*modifier0.extends[1]+40, 20*modifier0.extends[1]+40], [10*modifier0.extends[0], 10*modifier0.extends[0]+20], color='gold', linewidth=0.8, linestyle='dotted')
+    ax.set_xlim([0-0.5, 40-0.5])
+    ax.set_ylim([20-0.5, 0-0.5])
 
 # -------------------- Main Analysis --------------------
 
@@ -177,7 +210,7 @@ print("train_Data shape : ", train_data.shape)
 print("-"*20)
 
 np.random.seed(206265)
-sample_idx = list(np.random.randint(0, test_data.shape[0]//800, 2))
+sample_idx = list(np.random.randint(0, test_data.shape[0]//800, 10))
 #sample_idx = list(range(0, test_data.shape[0]//800))
 print("sample idx : [", end='')
 for idx in sample_idx:
@@ -205,4 +238,4 @@ for num, i in tqdm(enumerate(sample_idx[:]), total=len(sample_idx)):
     target_maps[num, :, :] = target.copy()
 
     total_num += 1
-    plotter(state, target_maps[num, :, :], pred_maps[num, :, :], i, sim=(True, train_data, False))
+    plotter(state, target_maps[num, :, :], i)
