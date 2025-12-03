@@ -117,25 +117,36 @@ def plotter(state, reward_map0, idx):
 
     # --------------- plot ax[1][0] ---------------
     # Fourier Transforms of LCs
-    fft_coef_zip_target = np.abs(np.fft.fft(lc_target))[1:lc_target.shape[0]//2+1]
-    fft_coef_zip_target = np.log10(fft_coef_zip_target)
-    fft_coef_zip_pred = np.abs(np.fft.fft(lc_pred))[1:lc_pred.shape[0]//2+1]
-    fft_coef_zip_pred = np.log10(fft_coef_zip_pred)
-    lim = (np.min(fft_coef_zip_target)-0.3, np.max(fft_coef_zip_target)+0.3)
+    fft_target = np.fft.fft(lc_target)[1:lc_target.shape[0]//2+1]
+    fft_pred = np.fft.fft(lc_pred)[1:lc_pred.shape[0]//2+1]
+    fft_target_mag = np.log10(np.abs(fft_target))
+    fft_pred_mag = np.log10(np.abs(fft_pred))
+    lim = (np.min(fft_target_mag)-0.3, np.max(fft_target_mag)+0.3)
 
-    ax[1][0].plot(fft_coef_zip_target, color='royalblue')
-    ax[1][0].plot(fft_coef_zip_pred, color='orangered')
-    ax[1][0].plot([np.argmax(fft_coef_zip_target), np.argmax(fft_coef_zip_target)], [lim[0], lim[1]], linestyle='dotted', color='gray')
+    ax[1][0].plot(fft_target_mag, color='royalblue')
+    ax[1][0].plot(fft_pred_mag, color='orangered')
+    ax[1][0].plot([np.argmax(fft_target_mag), np.argmax(fft_target_mag)], [lim[0], lim[1]], linestyle='dotted', color='gray')
     ax[1][0].set_title("FFT of LC at idx " + str(idx))
     ax[1][0].set_ylim(lim[0], lim[1])
 
     # --------------- plot ax[2][0] ---------------
     # lc_pred - lc_target
-    ax[2][0].plot(lc_pred-lc_target, label=r"$\Delta LC$", color='royalblue')
-    ax[2][0].set_title(r"$\Delta LC$ at idx " + str(idx))
-    ax[2][0].legend()
-    _quaterLine(ax=ax[2][0], xlim=[0, len(lc_pred)], ylim=ax[2][0].set_ylim())
-    ax[2][0].plot(ax[2][0].set_xlim(), [0, 0], color='gray', linestyle='dotted', alpha=0.4)
+    FFT = True
+    if not FFT:
+        ax[2][0].plot(lc_pred-lc_target, label=r"$\Delta LC$", color='royalblue')
+        ax[2][0].set_title(r"$\Delta LC$ at idx " + str(idx))
+        ax[2][0].legend()
+        _quaterLine(ax=ax[2][0], xlim=[0, len(lc_pred)], ylim=ax[2][0].set_ylim())
+        ax[2][0].plot(ax[2][0].set_xlim(), [0, 0], color='gray', linestyle='dotted', alpha=0.4)
+    else:
+        fft_delta = np.fft.fft(lc_pred-lc_target)[1:lc_pred.shape[0]//2+1]
+        fft_delta_mag = np.log10(np.abs(fft_delta))
+        lim = (np.min(fft_delta_mag)-0.3, np.max(fft_delta_mag)+0.3)
+        ax[2][0].plot(fft_delta_mag, color='royalblue')
+        ax[2][0].plot(np.angle(fft_delta)/np.pi, color='orangered')
+        ax[2][0].plot([np.argmax(fft_delta_mag), np.argmax(fft_delta_mag)], [lim[0], lim[1]], linestyle='dotted', color='gray')
+        ax[2][0].set_title(r"FFT of $\Delta LC$ at idx " + str(idx))
+        ax[2][0].set_ylim(lim[0], lim[1])
 
     # --------------- plot ax[0][1] ---------------
     # reward_map0
@@ -156,8 +167,17 @@ def plotter(state, reward_map0, idx):
 
     # --------------- plot ax[2][1] ---------------
     # Fourier Transform of reward_map0 - arg values
-    ax[2][1].imshow(rewardMapF_arg)
+    ax[2][1].imshow(rewardMapF_arg/np.pi)
     ax[2][1].set_title("F.T. of reward_map0 (arg)")
+
+    # --------------- plot ax[1][2] ---------------
+    # Fourier Transform of reward_map0 - arg values
+    filter = np.zeros_like(rewardMapF)
+    f = 3
+    filter[:f+1, :f] = 1
+    filter[-f:, -f:] = 1
+    filterRewardMap = np.fft.irfft2(rewardMapF * filter)
+    ax[1][2].imshow(filterRewardMap, vmax=np.max(np.abs(filterRewardMap)), vmin=-np.max(np.abs(filterRewardMap)))
 
 
 
