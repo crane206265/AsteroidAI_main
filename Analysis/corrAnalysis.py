@@ -298,7 +298,7 @@ for num, i in tqdm(enumerate(sample_idx[:]), total=len(sample_idx)):
     target_maps[num, :, :] = target.copy()
 
     total_num += 1
-    #plotter(state, target_maps[num, :, :], i)
+    plotter(state, target_maps[num, :, :], i)
 
 states = test_data[np.array(sample_idx)*800, :1006]
-scatter(states, target_maps)
+#scatter(states, target_maps)

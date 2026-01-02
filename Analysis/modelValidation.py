@@ -745,26 +745,21 @@ def plotter(state, reward_map0, reward_map, loss, idx, sim=(False, None, False))
     lc_pred = state[900:1000]
     lc_info = state[1000:1006]
 
-    fig = plt.figure(figsize=(14, 6), dpi=200)
-    ax1 = fig.add_subplot(2, 3, 1)
-    ax2 = fig.add_subplot(2, 3, 2)
-    ax3 = fig.add_subplot(2, 3, 3)
-    ax4 = fig.add_subplot(2, 3, 4)
-    ax5 = fig.add_subplot(2, 3, 5)
-    ax6 = fig.add_subplot(2, 3, 6)
-
+    fig = plt.figure(figsize=(14, 14), dpi=200)
+    ax = [[fig.add_subplot(3, 3, 3*i+j) for j in range(1,3+1)] for i in range(3)]
+    
     Sdir = lc_info[0:3]
     Edir = lc_info[3:6]
     Stheta = np.arccos(Sdir[-1]) * 20 / np.pi
     Etheta = np.arccos(Edir[-1]) * 20 / np.pi
 
-    # --------------- plot ax1 ---------------
+    # --------------- plot ax[0][0] ---------------
     # lightcurves
-    ax1.plot(lc_pred, label="lc_pred", color='royalblue')
-    ax1.plot(lc_target, label="lc_target", color='orangered', linestyle='dotted')
-    ax1.set_title("Lightcurve at idx " + str(idx))
+    ax[0][0].plot(lc_pred, label="lc_pred", color='royalblue')
+    ax[0][0].plot(lc_target, label="lc_target", color='orangered', linestyle='dotted')
+    ax[0][0].set_title("Lightcurve at idx " + str(idx))
 
-    # --------------- plot ax2 ---------------
+    # --------------- plot ax[0][1] ---------------
     # Fourier Transforms of LCs
     fft_coef_zip_target = np.abs(np.fft.fft(lc_target))[1:lc_target.shape[0]//2+1]
     fft_coef_zip_target = np.log10(fft_coef_zip_target)
@@ -772,45 +767,65 @@ def plotter(state, reward_map0, reward_map, loss, idx, sim=(False, None, False))
     fft_coef_zip_pred = np.log10(fft_coef_zip_pred)
     lim = (np.min(fft_coef_zip_target)-0.3, np.max(fft_coef_zip_target)+0.3)
 
-    ax2.plot(fft_coef_zip_target, color='royalblue')
-    ax2.plot(fft_coef_zip_pred, color='orangered')
-    ax2.plot([np.argmax(fft_coef_zip_target), np.argmax(fft_coef_zip_target)], [lim[0], lim[1]], linestyle='dotted', color='gray')
-    ax2.set_title("FFT of LC at idx " + str(idx))
-    ax2.set_ylim(lim[0], lim[1])
+    ax[0][1].plot(fft_coef_zip_target, color='royalblue')
+    ax[0][1].plot(fft_coef_zip_pred, color='orangered')
+    ax[0][1].plot([np.argmax(fft_coef_zip_target), np.argmax(fft_coef_zip_target)], [lim[0], lim[1]], linestyle='dotted', color='gray')
+    ax[0][1].set_title("FFT of LC at idx " + str(idx))
+    ax[0][1].set_ylim(lim[0], lim[1])
 
-    # --------------- plot ax3 ---------------
+    # --------------- plot ax[0][2] ---------------
     # similarity_histogram
     similarity_arr = simArrCal(r_arr, sim[1], idx, self_sim=sim[2]) if sim[0] else []
-    ax3.hist(similarity_arr, bins=np.linspace(0, 100, 51), color='orange', alpha=0.5, label='Similarity Histogram')
-    ax3.set_xticks(np.linspace(0, 100, 11))
-    ax3.set_xlabel('Similarity (MSE)')
-    ax3.set_ylabel('Frequency')
+    ax[0][2].hist(similarity_arr, bins=np.linspace(0, 100, 51), color='orange', alpha=0.5, label='Similarity Histogram')
+    ax[0][2].set_xticks(np.linspace(0, 100, 11))
+    ax[0][2].set_xlabel('Similarity (MSE)')
+    ax[0][2].set_ylabel('Frequency')
     title = "Self-Similarity Histogram at idx="+str(idx) if sim[2] else "Similarity Histogram at idx="+str(idx)
-    ax3.set_title(title)
+    ax[0][2].set_title(title)
 
-    # --------------- plot ax4 ---------------
+    # --------------- plot ax[1][0] ---------------
     # r_arr
-    r_arr_img = ax4.imshow(r_arr, vmax=8, vmin=12)
-    ax4.set_title("R_arr at idx " + str(idx))
-    plt.colorbar(r_arr_img, ax=ax4, shrink=0.75)
-    ax4.plot([0, 39], [Stheta, Stheta], color='orangered', label='Sun Direction', linewidth=2, linestyle='dashed')
-    ax4.plot([0, 39], [Etheta, Etheta], color='royalblue', label='Earth Direction', linewidth=2, linestyle='dashed')
-    ax4.legend()
+    r_arr_img = ax[1][0].imshow(r_arr, vmax=8, vmin=12)
+    ax[1][0].set_title("R_arr at idx " + str(idx))
+    plt.colorbar(r_arr_img, ax=ax[1][0], shrink=0.75)
+    ax[1][0].plot([0, 39], [Stheta, Stheta], color='orangered', label='Sun Direction', linewidth=2, linestyle='dashed')
+    ax[1][0].plot([0, 39], [Etheta, Etheta], color='royalblue', label='Earth Direction', linewidth=2, linestyle='dashed')
+    ax[1][0].legend()
 
-    # --------------- plot ax5 ---------------
+    # --------------- plot ax[1][1] ---------------
     # reward_map0
-    reward_map0_img = ax5.imshow(reward_map0, vmax=np.max(np.abs(reward_map0)), vmin=-np.max(np.abs(reward_map0)))#, vmax=6, vmin=-6)
-    ax5.set_title("Reward_Map at idx " + str(idx) + "(loss="+str(int(loss*1000)/1000)+")")
-    plt.colorbar(reward_map0_img, ax=ax5, shrink=0.75)
-    _setRewardMapPlot(ax=ax5, Etheta=Etheta, Stheta=Stheta)
+    reward_map0_img = ax[1][1].imshow(reward_map0, vmax=np.max(np.abs(reward_map0)), vmin=-np.max(np.abs(reward_map0)))#, vmax=6, vmin=-6)
+    ax[1][1].set_title("Reward_Map at idx " + str(idx) + "(loss="+str(int(loss*1000)/1000)+")")
+    plt.colorbar(reward_map0_img, ax=ax[1][1], shrink=0.75)
+    _setRewardMapPlot(ax=ax[1][1], Etheta=Etheta, Stheta=Stheta)
 
-    # --------------- plot ax5 ---------------
+    # --------------- plot ax[1][2] ---------------
     # reward_map (predicted by model)
-    reward_map_img = ax6.imshow(reward_map, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)))#, vmax=6, vmin=-6)
-    ax6.set_title("Reward_Map at idx " + str(idx) + "(loss="+str(int(loss*1000)/1000)+")")
-    plt.colorbar(reward_map_img, ax=ax6, shrink=0.75)
-    _setRewardMapPlot(ax=ax6, Etheta=Etheta, Stheta=Stheta)
+    reward_map_img = ax[1][2].imshow(reward_map, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)))#, vmax=6, vmin=-6)
+    ax[1][2].set_title("Reward_Map at idx " + str(idx) + "(loss="+str(int(loss*1000)/1000)+")")
+    plt.colorbar(reward_map_img, ax=ax[1][2], shrink=0.75)
+    _setRewardMapPlot(ax=ax[1][2], Etheta=Etheta, Stheta=Stheta)
 
+    # --------------- plot ax[2][1] ---------------
+    # F.T of reward_map (predicted by model)
+    rewardMap0F = np.fft.rfft2(reward_map0)
+    rewardMap0F_mag = np.abs(rewardMap0F)
+    rewardMap0F_arg = np.angle(rewardMap0F)
+    rewardMap0F_img = ax[2][1].imshow(np.concatenate((np.log10(rewardMap0F_mag)-0.5, rewardMap0F_arg*2/np.pi), axis=-1))#, vmax=6, vmin=-6)
+    ax[2][1].plot((rewardMap0F_mag.shape[1]-0.5, rewardMap0F_mag.shape[1]-0.5), (0, rewardMap0F_mag.shape[0]-0.5), color='red')
+    ax[2][1].set_title("F.T of Reward_Map0 at idx " + str(idx))
+    plt.colorbar(rewardMap0F_img, ax=ax[2][1], shrink=0.75)
+
+    # --------------- plot ax[2][2] ---------------
+    # F.T of reward_map (predicted by model)
+    rewardMapF = np.fft.rfft2(reward_map)
+    rewardMapF_mag = np.abs(rewardMapF)
+    rewardMapF_arg = np.angle(rewardMapF)
+    rewardMapF_img = ax[2][2].imshow(np.concatenate((np.log10(rewardMapF_mag)-0.5, rewardMapF_arg*2/np.pi), axis=-1))#, vmax=6, vmin=-6)
+    FTMSE_loss = np.mean((np.log10(rewardMap0F_mag) - np.log10(rewardMapF_mag))**2)
+    ax[2][2].plot((rewardMap0F_mag.shape[1]-0.5, rewardMap0F_mag.shape[1]-0.5), (0, rewardMap0F_mag.shape[0]-0.5), color='red')
+    ax[2][2].set_title("F.T of Reward_Map at idx " + str(idx) + " (FTMSE = " + str(int(FTMSE_loss*1000)/1000)+ ")")
+    plt.colorbar(rewardMapF_img, ax=ax[2][2], shrink=0.75)
 
     plt.tight_layout()
     #plt.show()
