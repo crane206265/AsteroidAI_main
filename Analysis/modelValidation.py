@@ -1062,7 +1062,9 @@ def LCSim(lc_pred, lc_target, dataset, idx, self_sim=False):
     targetF_mag     /= targetF_mag[1]
 
     # dataset -> global
-    global LCSim_dataset_cal, lc_pred_dataset, lc_target_dataset, delta_lc_dataset, predF_dataset, targetF_dataset
+    global LCSim_dataset_cal, \
+        lc_pred_dataset, lc_target_dataset, delta_lc_dataset, \
+        predF_dataset, targetF_dataset, predF_dataset_mag, targetF_dataset_mag
     if not LCSim_dataset_cal:
         LCSim_dataset_cal = True # only calculate once (for optimization)
         lc_pred_dataset   = dataset[block_idx, 900:1000]
@@ -1299,6 +1301,8 @@ lc_target_dataset = None
 delta_lc_dataset = None
 predF_dataset = None
 targetF_dataset = None
+predF_dataset_mag = None
+targetF_dataset_mag = None
 
 print("[Data shapes]")
 print("test_Data shape : ", test_data.shape)
