@@ -69,7 +69,8 @@ def img2PdfHorizontal(img_triplets, out_pdf_path, page_size=A4, margin=50):
 if __name__ == "__main__":
     
     base_path = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data_analysis/testset_model_analysis_imgs/"
-    folder_paths = ["train1122_1/", "train1129_1/", "train1129_2/"]
+    #folder_paths = ["train1122_1/", "train1129_1/", "train1129_2/"]
+    folder_paths = ["train1129_1/", "train0110_1/", "train0112_1/"]
 
     # img lists for each folder (sorted)
     img_paths = [sorted(os.listdir(base_path + folder_path)) for folder_path in folder_paths]
@@ -82,6 +83,6 @@ if __name__ == "__main__":
     ]
 
     img2PdfHorizontal(
-        img_triplets[::4],
+        img_triplets[::],
         base_path + "img2PdfHorizontal_landscape.pdf"
     )

@@ -931,10 +931,11 @@ def loss_fn(input, target):
 
 # -------------------- Similarity Functions --------------------
 # Similarity Function
-def MSE_Roll_r_sim(pred_img, target_img):
+def RMSE_Roll_r_sim(pred_img, target_img):
+    # Optimized Version by GPT (26.01.12)
     """
-    ## MSE_Roll_r_sim
-    **: calculate similiarity with MSE-based mechanism. Rolling the target image, select the minimum loss.**
+    ## RMSE_Roll_r_sim
+    **: calculate similiarity with RMSE-based mechanism. Rolling the target image, select the minimum loss.**
     
     ### Input
     - pred_img
@@ -945,17 +946,26 @@ def MSE_Roll_r_sim(pred_img, target_img):
     - roll_idx for similarity
     """
 
-    sims = np.zeros((40))
-    for i in range(40):
-        pred_img_roll = np.roll(pred_img, i, axis=1)
-        sims[i] = np.sqrt(np.mean((pred_img_roll - target_img) ** 2))
-    sims = sims * 100
+    # flatten along longitude (roll axis)
+    P = pred_img.reshape(-1)
+    T = target_img.reshape(-1)
+
+    # FFT-based circular cross-correlation
+    fftP = np.fft.fft(P)
+    fftT = np.fft.fft(T)
+    corr = np.fft.ifft(fftP * np.conj(fftT)).real
+
+    # MSE for each roll
+    mse = (np.sum(P**2) + np.sum(T**2) - 2*corr) / P.size
+    sims = np.sqrt(mse + 1e-8) * 100
 
     return np.min(sims), np.argmin(sims)
 
-def simArrCal(r_arr, dataset, idx, self_sim=False):
+
+def rArrSim(r_arr, dataset, idx, self_sim=False):
+    # Optimized Version by GPT (26.01.12)
     """
-    ## simArrCal
+    ## rArrSim
     **: calculate similiarity array for given r_arr and dataset**
 
     ### Input
@@ -969,23 +979,115 @@ def simArrCal(r_arr, dataset, idx, self_sim=False):
         - len = (dataset.shape[0]//800)
     """
 
-    similarity_arr = np.zeros((dataset.shape[0] // 800))
-    #for j in tqdm(range(0, dataset.shape[0], 800)):
-    for j in range(0, dataset.shape[0], 800):
-        if self_sim and j // 800 == idx:
-            continue
-        r_arr_dataset = dataset[j, :800].reshape(40, 20).T
-        #lc_arr_dataset = dataset[j, 800:900]
+    block_size = 800
+    num_blocks = dataset.shape[0] // block_size
+    similarity_arr = np.zeros(num_blocks)
 
-        mean0 = 5
-        r_arr = r_arr * mean0 / np.mean(r_arr)
+    mean0 = 5
+    r_arr_norm = r_arr * mean0 / np.mean(r_arr)
+
+    for j in range(num_blocks):
+        if self_sim and j == idx:
+            similarity_arr[j] = np.nan
+            continue
+
+        r_arr_dataset = dataset[j*block_size, :block_size].reshape(40, 20).T
         r_arr_dataset = r_arr_dataset * mean0 / np.mean(r_arr_dataset)
 
-        similarity, roll_idx = MSE_Roll_r_sim(r_arr, r_arr_dataset)
-        similarity_arr[j // 800] = similarity
-    
-        #print(f"Sample Set {i}, Train Set {j//800}, Similarity: {similarity:.2f}, Roll Index: {roll_idx}")
+        similarity, roll_idx = RMSE_Roll_r_sim(r_arr_norm, r_arr_dataset)
+        similarity_arr[j] = similarity
+
     return similarity_arr
+
+
+def dirDistn(dataset, idx, self_sim=False):
+    """
+    ## dirSim
+    **: calculate distribution array for given dir(direction data) and dataset**
+
+    ### Input
+    - dataset : objective dataset - the function will calculate similairty btw dir(input) and dir's in this dataset
+    - idx
+    - self_sim : set True if dataset contains dir (i.e. calculating self-similarity)
+
+    ### Output
+    - Stheta_distn : 1D array of latitude of Sdirs (for plotting histogram)
+    - Etheta_distn : 1D array of latitude of Edirs (for plotting histogram)
+    - cosA_distn : 1D array of latitude of cosAs (for plotting histogram)
+        - cosA : cosine value of A, the angle btw. Sdir and Edir
+        - len = (dataset.shape[0]//800)
+    """
+
+    block_idx = np.arange(0, dataset.shape[0], 800)
+    N = len(block_idx)
+
+    Sdir = dataset[block_idx, 1000:1003]
+    Edir = dataset[block_idx, 1003:1006]
+    Stheta_distn = np.arccos(Sdir[:, -1]) / np.pi
+    Etheta_distn = np.arccos(Edir[:, -1]) / np.pi
+    cosA_distn   = (np.einsum('ij,ij->i', Sdir, Edir) + 1) / 2
+
+    if self_sim:
+        Stheta_distn[idx] = np.nan
+        Etheta_distn[idx] = np.nan
+        cosA_distn[idx]   = np.nan
+
+    return Stheta_distn, Etheta_distn, cosA_distn
+
+def LCSim(lc_pred, lc_target, dataset, idx, self_sim=False):
+    """
+    ## LCSim
+    **: calculate similiarity array for given LCs and dataset**
+
+    ### Input
+    - lc_pred : target lc_pred for similairity calculation
+    - lc_target : target lc_target for similairity calculation
+    - dataset : objective dataset - the function will calculate similairty btw LCs(input) and LC's in this dataset
+    - idx
+    - self_sim : set True if dataset contains LCs (i.e. calculating self-similarity)
+
+    ### Output
+    - similarity_arr : 1D array of similarities (for plotting histogram)
+        - len = (dataset.shape[0]//800)
+    """
+    block_idx = np.arange(0, dataset.shape[0], 800)
+    N = len(block_idx)
+    
+    delta_lc = lc_pred - lc_target
+    predF           = np.fft.fft(lc_pred)[1:lc_pred.shape[0]//2+1]
+    targetF         = np.fft.fft(lc_target)[1:lc_target.shape[0]//2+1]
+    predF_mag       = np.log10(np.abs(predF))
+    predF_mag       /= predF_mag[1]
+    targetF_mag     = np.log10(np.abs(targetF))
+    targetF_mag     /= targetF_mag[1]
+
+    # dataset -> global
+    global LCSim_dataset_cal, lc_pred_dataset, lc_target_dataset, delta_lc_dataset, predF_dataset, targetF_dataset
+    if not LCSim_dataset_cal:
+        LCSim_dataset_cal = True # only calculate once (for optimization)
+        lc_pred_dataset   = dataset[block_idx, 900:1000]
+        lc_target_dataset = dataset[block_idx, 800:900]
+        delta_lc_dataset = lc_pred_dataset - lc_target_dataset    
+        predF_dataset           = np.fft.fft(lc_pred_dataset, axis=1)[:, 1:lc_pred.shape[0]//2+1]
+        targetF_dataset         = np.fft.fft(lc_target_dataset, axis=1)[:, 1:lc_target.shape[0]//2+1]
+        predF_dataset_mag       = np.log10(np.abs(predF_dataset))
+        predF_dataset_mag       /= predF_dataset_mag[1]
+        targetF_dataset_mag     = np.log10(np.abs(targetF_dataset))
+        targetF_dataset_mag     /= targetF_dataset_mag[1]
+
+    # delta_lc similarity
+    delta_lc_sim = np.mean((delta_lc_dataset - delta_lc)**2, axis=-1)**0.5
+
+    # lc-FFT similarity
+    predF_mag_sim   = np.mean((predF_mag - predF_dataset_mag)**2,     axis=-1)**0.5
+    targetF_mag_sim = np.mean((targetF_mag - targetF_dataset_mag)**2, axis=-1)**0.5
+
+    if self_sim:
+        delta_lc_sim[idx]    = np.nan
+        predF_mag_sim[idx]   = np.nan
+        targetF_mag_sim[idx] = np.nan
+
+    return delta_lc_sim, predF_mag_sim, targetF_mag_sim
 
 # -------------------- Plotting Functions --------------------
 
@@ -1010,8 +1112,8 @@ def plotter(state, reward_map0, reward_map, loss, idx, sim=(False, None, False))
     lc_pred = state[900:1000]
     lc_info = state[1000:1006]
 
-    fig = plt.figure(figsize=(14, 9), dpi=200)
-    ax = [[fig.add_subplot(3, 3, 3*i+j) for j in range(1,3+1)] for i in range(3)]
+    fig = plt.figure(figsize=(14, 14), dpi=200)
+    ax = [[fig.add_subplot(4, 3, 3*i+j) for j in range(1,3+1)] for i in range(4)]
     
     Sdir = lc_info[0:3]
     Edir = lc_info[3:6]
@@ -1038,16 +1140,6 @@ def plotter(state, reward_map0, reward_map, loss, idx, sim=(False, None, False))
     ax[0][1].set_title("FFT of LC at idx " + str(idx))
     ax[0][1].set_ylim(lim[0], lim[1])
 
-    # --------------- plot ax[0][2] ---------------
-    # similarity_histogram
-    similarity_arr = simArrCal(r_arr, sim[1], idx, self_sim=sim[2]) if sim[0] else []
-    ax[0][2].hist(similarity_arr, bins=np.linspace(0, 100, 51), color='orange', alpha=0.5, label='Similarity Histogram')
-    ax[0][2].set_xticks(np.linspace(0, 100, 11))
-    ax[0][2].set_xlabel('Similarity (MSE)')
-    ax[0][2].set_ylabel('Frequency')
-    title = "Self-Similarity Histogram at idx="+str(idx) if sim[2] else "Similarity Histogram at idx="+str(idx)
-    ax[0][2].set_title(title)
-
     # --------------- plot ax[1][0] ---------------
     # r_arr
     r_arr_img = ax[1][0].imshow(r_arr, vmax=8, vmin=12)
@@ -1058,39 +1150,95 @@ def plotter(state, reward_map0, reward_map, loss, idx, sim=(False, None, False))
     ax[1][0].legend()
 
     # --------------- plot ax[1][1] ---------------
-    # reward_map0
-    reward_map0_img = ax[1][1].imshow(reward_map0, vmax=np.max(np.abs(reward_map0)), vmin=-np.max(np.abs(reward_map0)))#, vmax=6, vmin=-6)
-    ax[1][1].set_title("Reward_Map at idx " + str(idx) + "(ref_reward="+str(int(state[-1]*100)/100)+")")
-    plt.colorbar(reward_map0_img, ax=ax[1][1], shrink=0.75)
-    _setRewardMapPlot(ax=ax[1][1], Etheta=Etheta, Stheta=Stheta)
 
-    # --------------- plot ax[1][2] ---------------
-    # reward_map (predicted by model)
-    reward_map_img = ax[1][2].imshow(reward_map, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)))#, vmax=6, vmin=-6)
-    ax[1][2].set_title("Reward_Map at idx " + str(idx) + "(loss="+str(int(loss*1000)/1000)+")")
-    plt.colorbar(reward_map_img, ax=ax[1][2], shrink=0.75)
-    _setRewardMapPlot(ax=ax[1][2], Etheta=Etheta, Stheta=Stheta)
+    # --------------- plot ax[2][0] ---------------
+    # reward_map0
+    reward_map0_img = ax[2][0].imshow(reward_map0, vmax=np.max(np.abs(reward_map0)), vmin=-np.max(np.abs(reward_map0)))#, vmax=6, vmin=-6)
+    ax[2][0].set_title("Reward_Map at idx " + str(idx) + "(ref_reward="+str(int(state[-1]*100)/100)+")")
+    plt.colorbar(reward_map0_img, ax=ax[2][0], shrink=0.75)
+    _setRewardMapPlot(ax=ax[2][0], Etheta=Etheta, Stheta=Stheta)
 
     # --------------- plot ax[2][1] ---------------
+    # reward_map (predicted by model)
+    reward_map_img = ax[2][1].imshow(reward_map, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)))#, vmax=6, vmin=-6)
+    ax[2][1].set_title("Reward_Map at idx " + str(idx) + "(loss="+str(int(loss*1000)/1000)+")")
+    plt.colorbar(reward_map_img, ax=ax[2][1], shrink=0.75)
+    _setRewardMapPlot(ax=ax[2][1], Etheta=Etheta, Stheta=Stheta)
+
+    # --------------- plot ax[3][0] ---------------
     # F.T of reward_map (predicted by model)
     rewardMap0F = np.fft.rfft2(reward_map0)
     rewardMap0F_mag = np.abs(rewardMap0F)
     rewardMap0F_arg = np.angle(rewardMap0F)
-    rewardMap0F_img = ax[2][1].imshow(np.concatenate((np.log10(rewardMap0F_mag)-0.5, rewardMap0F_arg*2/np.pi), axis=-1))#, vmax=6, vmin=-6)
-    ax[2][1].plot((rewardMap0F_mag.shape[1]-0.5, rewardMap0F_mag.shape[1]-0.5), (0, rewardMap0F_mag.shape[0]-0.5), color='red')
-    ax[2][1].set_title("F.T of Reward_Map0 at idx " + str(idx))
-    plt.colorbar(rewardMap0F_img, ax=ax[2][1], shrink=0.75)
+    rewardMap0F_img = ax[3][0].imshow(np.concatenate((np.log10(rewardMap0F_mag)-0.5, rewardMap0F_arg*2/np.pi), axis=-1))#, vmax=6, vmin=-6)
+    ax[3][0].plot((rewardMap0F_mag.shape[1]-0.5, rewardMap0F_mag.shape[1]-0.5), (0, rewardMap0F_mag.shape[0]-0.5), color='red')
+    ax[3][0].set_title("F.T of Reward_Map0 at idx " + str(idx))
+    plt.colorbar(rewardMap0F_img, ax=ax[3][0], shrink=0.75)
 
-    # --------------- plot ax[2][2] ---------------
+    # --------------- plot ax[3][1] ---------------
     # F.T of reward_map (predicted by model)
     rewardMapF = np.fft.rfft2(reward_map)
     rewardMapF_mag = np.abs(rewardMapF)
     rewardMapF_arg = np.angle(rewardMapF)
-    rewardMapF_img = ax[2][2].imshow(np.concatenate((np.log10(rewardMapF_mag)-0.5, rewardMapF_arg*2/np.pi), axis=-1))#, vmax=6, vmin=-6)
+    rewardMapF_img = ax[3][1].imshow(np.concatenate((np.log10(rewardMapF_mag)-0.5, rewardMapF_arg*2/np.pi), axis=-1))#, vmax=6, vmin=-6)
     FTMSE_loss = np.mean((np.log10(rewardMap0F_mag) - np.log10(rewardMapF_mag))**2)
-    ax[2][2].plot((rewardMap0F_mag.shape[1]-0.5, rewardMap0F_mag.shape[1]-0.5), (0, rewardMap0F_mag.shape[0]-0.5), color='red')
-    ax[2][2].set_title("F.T of Reward_Map at idx " + str(idx) + " (FTMSE = " + str(int(FTMSE_loss*1000)/1000)+ ")")
-    plt.colorbar(rewardMapF_img, ax=ax[2][2], shrink=0.75)
+    ax[3][1].plot((rewardMap0F_mag.shape[1]-0.5, rewardMap0F_mag.shape[1]-0.5), (0, rewardMap0F_mag.shape[0]-0.5), color='red')
+    ax[3][1].set_title("F.T of Reward_Map at idx " + str(idx) + " (FTMSE = " + str(int(FTMSE_loss*1000)/1000)+ ")")
+    plt.colorbar(rewardMapF_img, ax=ax[3][1], shrink=0.75)
+
+    # =============== Similarity Plot ===============
+    # --------------- plot ax[0][2] ---------------
+    # r_arr similarity histogram
+    rArrSim_arr = rArrSim(r_arr, sim[1], idx, self_sim=sim[2]) if sim[0] else []
+    ax[0][2].hist(rArrSim_arr, bins=np.linspace(0, 100, 51), color='orange', alpha=0.5, label='Similarity Histogram')
+    ax[0][2].set_xticks(np.linspace(0, 100, 11))
+    ax[0][2].set_xlabel('Similarity (MSE)')
+    ax[0][2].set_ylabel('Frequency')
+    title = "r_arr Self-Similarity Histogram at idx="+str(idx) if sim[2] else "r_arr Similarity Histogram at idx="+str(idx)
+    ax[0][2].set_title(title)
+
+    # --------------- plot ax[1][2] ---------------
+    # direction distribution histogram
+    global dirSim_cal, Stheta_distn, Etheta_distn, cosA_distn
+    if not dirSim_cal:
+        dirSim_cal = True
+        Stheta_distn, Etheta_distn, cosA_distn = dirDistn(sim[1], idx, self_sim=sim[2]) if sim[0] else ([], [], [])
+    Stheta_norm = Stheta/20
+    Etheta_norm = Etheta/20
+    cosA_norm   = (np.einsum('i,i->', Sdir, Edir) + 1) / 2
+    ax[1][2].hist(Stheta_distn, bins=np.linspace(0, 1, 51), color='orangered', alpha=0.4, label='Stheta')
+    ax[1][2].hist(Etheta_distn, bins=np.linspace(0, 1, 51), color='royalblue', alpha=0.4, label='Etheta')
+    ax[1][2].hist(cosA_distn,   bins=np.linspace(0, 1, 51), color='gold',      alpha=0.4, label='cosA')
+    ylim = ax[1][2].set_ylim()
+    ax[1][2].plot([Stheta_norm]*2, ylim, color='orangered')
+    ax[1][2].plot([Etheta_norm]*2, ylim, color='royalblue')
+    ax[1][2].plot([cosA_norm]*2,   ylim, color='gold')
+    ax[1][2].legend()
+    ax[1][2].set_xticks(np.linspace(0, 1, 11))
+    ax[1][2].set_xlabel('[0, 1] Normalized Direction')
+    ax[1][2].set_ylabel('Frequency')
+    title = "dir Self-Distribution Histogram at idx="+str(idx) if sim[2] else "dir Distribution Histogram at idx="+str(idx)
+    ax[1][2].set_title(title)
+
+    # --------------- plot ax[2][2] ---------------
+    # LC similarity histogram
+    delta_lc_sim, predF_mag_sim, targetF_mag_sim = LCSim(lc_pred, lc_target, sim[1], idx, self_sim=sim[2]) if sim[0] else []
+    
+    """
+    ax[2][2].hist(delta_lc_sim, bins=np.linspace(0, 100, 51), color='orange', alpha=0.5, label='Similarity Histogram')
+    ax[2][2].set_xticks(np.linspace(0, 100, 11))
+    ax[2][2].set_xlabel('Similarity (MSE)')
+    ax[2][2].set_ylabel('Frequency')
+    title = "delta_LC Self-Similarity Histogram at idx="+str(idx) if sim[2] else "delta_LC Similarity Histogram at idx="+str(idx)
+    ax[2][2].set_title(title)
+    """
+
+    ax[3][2].hist(targetF_mag_sim, bins=np.linspace(0.8, 3.0, 11), color='orange', alpha=0.5, label='Similarity Histogram')
+    ax[3][2].set_xticks(np.linspace(0.8, 3.0, 11))
+    ax[3][2].set_xlabel('Similarity (MSE)')
+    ax[3][2].set_ylabel('Frequency')
+    title = "targetF_mag Self-Similarity Histogram at idx="+str(idx) if sim[2] else "targetF_mag Similarity Histogram at idx="+str(idx)
+    ax[3][2].set_title(title)
 
     plt.tight_layout()
     #plt.show()
@@ -1115,12 +1263,12 @@ def _setRewardMapPlot(ax:plt.Axes, Etheta, Stheta):
 # -------------------- Main Analysis --------------------
 
 #model_path = "C:/Users/dlgkr/Downloads/train1129_2/50model.pt"
-model_path = "C:/Users/dlgkr/Downloads/train0112_1/60model.pt"
-model_type = 'B2'
+model_path = "C:/Users/dlgkr/Downloads/train0110_1/60model.pt"
+model_type = 'B'
 hidden_dim = 4096
 
 base_path = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/"
-save_path = base_path + "data_analysis/testset_model_analysis_imgs/train0112_1/"
+save_path = base_path + "data_analysis/testset_model_analysis_imgs/train0110_1/"
 test_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/data_pole_axis_RL_preset_batch_filtered_3.npy"
 
 #save_path = base_path + "data_analysis/testset_model_analysis_imgs/train1129_2/ideal/"
@@ -1139,6 +1287,18 @@ for data_name in train_data_paths[:]:
     train_data_list.append(np.load(train_data_path)[1:])
 train_data = np.concatenate(train_data_list, axis=0)
 gc.collect()
+
+# for optimization, only calculate the distn / dataset-parameters once
+dirSim_cal = False
+LCSim_dataset_cal = False
+Stheta_distn = None
+Etheta_distn = None
+cosA_distn = None
+lc_pred_dataset = None
+lc_target_dataset = None
+delta_lc_dataset = None
+predF_dataset = None
+targetF_dataset = None
 
 print("[Data shapes]")
 print("test_Data shape : ", test_data.shape)
