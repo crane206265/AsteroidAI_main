@@ -489,7 +489,8 @@ class Runner():
         #30
         get_env_num = int(20 * (self.env.reward_threshold - max(self.env.reward0, 0)) / self.env.reward_threshold)#int(30 * (self.env.reward_threshold - self.env.reward0) / self.env.reward_threshold)
         get = 0
-        reward_threshold_list = np.linspace(max(self.env.reward0, 0), self.env.reward_threshold, get_env_num)
+        #reward_threshold_list = np.linspace(max(self.env.reward0, 0), self.env.reward_threshold, get_env_num)
+        reward_threshold_list = np.linspace(self.env.reward0, self.env.reward_threshold, get_env_num) #260108
         if reward_threshold_list.shape[0] == 0:
             return
         

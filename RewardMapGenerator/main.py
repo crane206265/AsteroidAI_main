@@ -14,12 +14,16 @@ from envs import AstEnv, Runner
 
 
 #################### Settings ####################
-DATA_PATH = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data/data_pole_axis_total_preprocessed.npz"
+prefix = ""
+prefix = "ideal_"
+
+DATA_PATH = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data/"+prefix+"data_pole_axis_total_preprocessed.npz"
 SAVE_PATH = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data/"
  
 N_set = (40, 20)
 lightcurve_unit_len = 100
 reward_domain = [-100, 50] #-20, 50
+reward_domain = [-200, 50] #-20, 50
 
 # Global Variables for each Worker Processors
 X_total = None
@@ -76,6 +80,7 @@ def run_one(local_i):
         ell_init=(True, ell)
     )
 
+    #print("\nlocal_i = "+str(local_i)+" | env.reward0 = "+str(env.reward0))
     # If ellipsoid initialization fails, return flag
     if env.ell_err:
         return None, True, env.reward0, global_i
@@ -124,6 +129,7 @@ def run_one(local_i):
 
     # If ellipsoid initialization fails, return flag
     if env.ell_err:
+        #print(env.reward0)
         return None, True, env.reward0, global_i
 
     state_dim = (env.Ntheta // env.ast_obs_unit_step) * (env.Nphi // env.ast_obs_unit_step) \
@@ -139,8 +145,8 @@ def run_one(local_i):
 
 def main():
     # ---- Range of global indices to compute ----
-    start_idx = 1300       # inclusive
-    final_idx = 1500     # exclusive (global index)
+    start_idx = 000#1300       # inclusive
+    final_idx = 1000#1500     # exclusive (global index)
     num_samples = final_idx - start_idx
 
     # Number of worker processes (tune according to your CPU)
@@ -193,11 +199,11 @@ def main():
                 file_suffix = str(global_i + 1)
 
                 np.save(
-                    SAVE_PATH + f"data_pole_axis_RL_preset_{file_suffix}.npy",
+                    SAVE_PATH + prefix + f"data_pole_axis_RL_preset_{file_suffix}.npy",
                     total_data_set_arr
                 )
                 np.savez(
-                    SAVE_PATH + f"data_pole_axis_RL_preset_info{file_suffix}.npz",
+                    SAVE_PATH + prefix + f"data_pole_axis_RL_preset_info{file_suffix}.npz",
                     passed_idx=np.array(passed_idx_list, dtype=int),
                     reward0=np.array(reward0_list, dtype=float)
                 )
@@ -216,11 +222,11 @@ def main():
         if total_data_set_defined and total_data_set_arr is not None:
             file_suffix = str(start_idx + num_samples)
             np.save(
-                SAVE_PATH + f"data_pole_axis_RL_preset_{file_suffix}.npy",
+                SAVE_PATH + prefix + f"data_pole_axis_RL_preset_{file_suffix}.npy",
                 total_data_set_arr
             )
             np.savez(
-                SAVE_PATH + f"data_pole_axis_RL_preset_info{file_suffix}.npz",
+                SAVE_PATH + prefix + f"data_pole_axis_RL_preset_info{file_suffix}.npz",
                 passed_idx=np.array(passed_idx_list, dtype=int),
                 reward0=np.array(reward0_list, dtype=float)
             )
