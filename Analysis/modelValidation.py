@@ -1053,18 +1053,21 @@ def LCSim(lc_pred, lc_target, dataset, idx, self_sim=False):
     block_idx = np.arange(0, dataset.shape[0], 800)
     N = len(block_idx)
     
-    delta_lc = lc_pred - lc_target
     predF           = np.fft.fft(lc_pred)[1:lc_pred.shape[0]//2+1]
     targetF         = np.fft.fft(lc_target)[1:lc_target.shape[0]//2+1]
     predF_mag       = np.log10(np.abs(predF))
-    predF_mag       /= predF_mag[1]
+    predF_mag       -= predF_mag[1]
     targetF_mag     = np.log10(np.abs(targetF))
-    targetF_mag     /= targetF_mag[1]
+    targetF_mag     -= targetF_mag[1]
+
+    # F_mag similarity weight
+    weight = 1/(np.arange(1, predF_mag.shape[-1]+1)**1)
+    weight[1] = 1
 
     # dataset -> global
     global LCSim_dataset_cal, \
         lc_pred_dataset, lc_target_dataset, delta_lc_dataset, \
-        predF_dataset, targetF_dataset, predF_dataset_mag, targetF_dataset_mag
+        predF_dataset, targetF_dataset, predF_dataset_mag, targetF_dataset_mag, delta_lc_sim_dataset
     if not LCSim_dataset_cal:
         LCSim_dataset_cal = True # only calculate once (for optimization)
         lc_pred_dataset   = dataset[block_idx, 900:1000]
@@ -1073,16 +1076,17 @@ def LCSim(lc_pred, lc_target, dataset, idx, self_sim=False):
         predF_dataset           = np.fft.fft(lc_pred_dataset, axis=1)[:, 1:lc_pred.shape[0]//2+1]
         targetF_dataset         = np.fft.fft(lc_target_dataset, axis=1)[:, 1:lc_target.shape[0]//2+1]
         predF_dataset_mag       = np.log10(np.abs(predF_dataset))
-        predF_dataset_mag       /= predF_dataset_mag[1]
+        predF_dataset_mag       -= predF_dataset_mag[1]
         targetF_dataset_mag     = np.log10(np.abs(targetF_dataset))
-        targetF_dataset_mag     /= targetF_dataset_mag[1]
+        targetF_dataset_mag     -= targetF_dataset_mag[1]
+        delta_lc_sim_dataset = np.average((predF_dataset_mag - targetF_dataset_mag)**2, weights=weight, axis=-1)**0.5
 
     # delta_lc similarity
-    delta_lc_sim = np.mean((delta_lc_dataset - delta_lc)**2, axis=-1)**0.5
+    delta_lc_sim = np.average((predF_mag - targetF_mag)**2, weights=weight, axis=-1)**0.5
 
     # lc-FFT similarity
-    predF_mag_sim   = np.mean((predF_mag - predF_dataset_mag)**2,     axis=-1)**0.5
-    targetF_mag_sim = np.mean((targetF_mag - targetF_dataset_mag)**2, axis=-1)**0.5
+    predF_mag_sim   = np.average((predF_mag - predF_dataset_mag)**2,     weights=weight, axis=-1)**0.5
+    targetF_mag_sim = np.average((targetF_mag - targetF_dataset_mag)**2, weights=weight, axis=-1)**0.5
 
     if self_sim:
         delta_lc_sim[idx]    = np.nan
@@ -1115,7 +1119,8 @@ def plotter(state, reward_map0, reward_map, loss, idx, sim=(False, None, False))
     lc_info = state[1000:1006]
 
     fig = plt.figure(figsize=(14, 14), dpi=200)
-    ax = [[fig.add_subplot(4, 3, 3*i+j) for j in range(1,3+1)] for i in range(4)]
+    row, col = 4, 3
+    ax = [[fig.add_subplot(row, col, col*i+j) for j in range(1,col+1)] for i in range(row)]
     
     Sdir = lc_info[0:3]
     Edir = lc_info[3:6]
@@ -1211,10 +1216,10 @@ def plotter(state, reward_map0, reward_map, loss, idx, sim=(False, None, False))
     ax[1][2].hist(Stheta_distn, bins=np.linspace(0, 1, 51), color='orangered', alpha=0.4, label='Stheta')
     ax[1][2].hist(Etheta_distn, bins=np.linspace(0, 1, 51), color='royalblue', alpha=0.4, label='Etheta')
     ax[1][2].hist(cosA_distn,   bins=np.linspace(0, 1, 51), color='gold',      alpha=0.4, label='cosA')
-    ylim = ax[1][2].set_ylim()
-    ax[1][2].plot([Stheta_norm]*2, ylim, color='orangered')
-    ax[1][2].plot([Etheta_norm]*2, ylim, color='royalblue')
-    ax[1][2].plot([cosA_norm]*2,   ylim, color='gold')
+    ylim12 = ax[1][2].set_ylim()
+    ax[1][2].plot([Stheta_norm]*2, ylim12, color='orangered')
+    ax[1][2].plot([Etheta_norm]*2, ylim12, color='royalblue')
+    ax[1][2].plot([cosA_norm]*2,   ylim12, color='gold')
     ax[1][2].legend()
     ax[1][2].set_xticks(np.linspace(0, 1, 11))
     ax[1][2].set_xlabel('[0, 1] Normalized Direction')
@@ -1224,19 +1229,22 @@ def plotter(state, reward_map0, reward_map, loss, idx, sim=(False, None, False))
 
     # --------------- plot ax[2][2] ---------------
     # LC similarity histogram
+    global delta_lc_sim_dataset
     delta_lc_sim, predF_mag_sim, targetF_mag_sim = LCSim(lc_pred, lc_target, sim[1], idx, self_sim=sim[2]) if sim[0] else []
     
-    """
-    ax[2][2].hist(delta_lc_sim, bins=np.linspace(0, 100, 51), color='orange', alpha=0.5, label='Similarity Histogram')
-    ax[2][2].set_xticks(np.linspace(0, 100, 11))
+    ax[2][2].hist(delta_lc_sim_dataset, bins=np.linspace(0, 2.0, 33), color='orange', alpha=0.5)
+    ylim22 = ax[2][2].set_ylim()
+    ax[2][2].plot([delta_lc_sim]*2, ylim22, color='orange')
+    ax[2][2].set_xticks(np.linspace(0, 2.0, 11))
     ax[2][2].set_xlabel('Similarity (MSE)')
     ax[2][2].set_ylabel('Frequency')
-    title = "delta_LC Self-Similarity Histogram at idx="+str(idx) if sim[2] else "delta_LC Similarity Histogram at idx="+str(idx)
+    title = "delta_LC_sim Self-Distribution Histogram at idx="+str(idx) if sim[2] else "delta_LC_sim Distribution Histogram at idx="+str(idx)
     ax[2][2].set_title(title)
-    """
 
-    ax[3][2].hist(targetF_mag_sim, bins=np.linspace(0.8, 3.0, 11), color='orange', alpha=0.5, label='Similarity Histogram')
-    ax[3][2].set_xticks(np.linspace(0.8, 3.0, 11))
+    ax[3][2].hist(predF_mag_sim, bins=np.linspace(0.8, 4.0, 33), color='royalblue', alpha=0.3, label='predF_mag_sim')
+    ax[3][2].hist(targetF_mag_sim, bins=np.linspace(0.8, 4.0, 33), color='orangered', alpha=0.6, label='targetF_mag_sim')
+    ax[3][2].legend()
+    ax[3][2].set_xticks(np.linspace(0.8, 4.0, 9))
     ax[3][2].set_xlabel('Similarity (MSE)')
     ax[3][2].set_ylabel('Frequency')
     title = "targetF_mag Self-Similarity Histogram at idx="+str(idx) if sim[2] else "targetF_mag Similarity Histogram at idx="+str(idx)
@@ -1273,8 +1281,8 @@ base_path = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/"
 save_path = base_path + "data_analysis/testset_model_analysis_imgs/train0110_1/"
 test_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/data_pole_axis_RL_preset_batch_filtered_3.npy"
 
-#save_path = base_path + "data_analysis/testset_model_analysis_imgs/train1129_2/ideal/"
-#test_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/ideal/ideal_data_pole_axis_RL_preset_batch_0.npy"
+save_path = base_path + "data_analysis/testset_model_analysis_imgs/train0110_1/ideal/"
+test_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/ideal/ideal_data_pole_axis_RL_preset_batch_1.npy"
 
 test_data = np.load(test_data_path)[1:]
 gc.collect()
@@ -1303,6 +1311,7 @@ predF_dataset = None
 targetF_dataset = None
 predF_dataset_mag = None
 targetF_dataset_mag = None
+delta_lc_sim_dataset = None
 
 print("[Data shapes]")
 print("test_Data shape : ", test_data.shape)
@@ -1331,7 +1340,7 @@ total_num = 0
 filtered_percents = []
 
 for num, i in tqdm(enumerate(sample_idx[:]), total=len(sample_idx)):
-    state = test_data[i*800, :1006]
+    state = test_data[i*800, :]
     target0 = test_data[i*800:(i+1)*800, -2].reshape(40, 20).T
     target, _ = modifier0.operation(np.expand_dims(target0, axis=-1), None, order=['extend_vert', 'extend_hori', 'blur'])
     target = target[:, :, 0]
@@ -1339,7 +1348,7 @@ for num, i in tqdm(enumerate(sample_idx[:]), total=len(sample_idx)):
     pred = np.zeros((20, 40))
     model.eval()
     with torch.no_grad():
-        input = input_data(state)
+        input = input_data(state[:1006])
         rewards = model(input)
         pred = rewards.cpu().numpy().reshape(40, 20).T
 

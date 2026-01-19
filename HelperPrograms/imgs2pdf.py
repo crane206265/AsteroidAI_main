@@ -83,6 +83,6 @@ if __name__ == "__main__":
     ]
 
     img2PdfHorizontal(
-        img_triplets[::],
+        img_triplets[::4],
         base_path + "img2PdfHorizontal_landscape.pdf"
     )
