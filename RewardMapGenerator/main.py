@@ -15,15 +15,18 @@ from envs import AstEnv, Runner
 
 #################### Settings ####################
 prefix = ""
-prefix = "ideal_"
+#prefix = "ideal_"
+save_path_suffix = ""
+save_path_suffix = "RL_domain1/"
 
 DATA_PATH = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data/"+prefix+"data_pole_axis_total_preprocessed.npz"
-SAVE_PATH = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data/"
+SAVE_PATH = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data/"+save_path_suffix
  
 N_set = (40, 20)
 lightcurve_unit_len = 100
 reward_domain = [-100, 50] #-20, 50
-reward_domain = [-200, 50] #-20, 50
+reward_domain = [-200, 50] #ideal
+reward_domain = [-100, 100] # new domain including high-reward range (26.01.22) #domain1
 
 # Global Variables for each Worker Processors
 X_total = None
@@ -145,8 +148,8 @@ def run_one(local_i):
 
 def main():
     # ---- Range of global indices to compute ----
-    start_idx = 000#1300       # inclusive
-    final_idx = 1000#1500     # exclusive (global index)
+    start_idx = 388#1300       # inclusive
+    final_idx = 500#1500     # exclusive (global index)
     num_samples = final_idx - start_idx
 
     # Number of worker processes (tune according to your CPU)
