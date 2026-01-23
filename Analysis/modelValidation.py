@@ -1273,16 +1273,17 @@ def _setRewardMapPlot(ax:plt.Axes, Etheta, Stheta):
 # -------------------- Main Analysis --------------------
 
 #model_path = "C:/Users/dlgkr/Downloads/train1129_2/50model.pt"
-model_path = "C:/Users/dlgkr/Downloads/train0110_1/60model.pt"
-model_type = 'B'
+#model_path = "C:/Users/dlgkr/Downloads/train0110_1/60model.pt"
+model_path = "C:/Users/dlgkr/Downloads/train0123_1/40model.pt"
+model_type = 'B2'
 hidden_dim = 4096
 
 base_path = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/"
-save_path = base_path + "data_analysis/testset_model_analysis_imgs/train0110_1/"
+save_path = base_path + "data_analysis/testset_model_analysis_imgs/train0123_1/"
 test_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/data_pole_axis_RL_preset_batch_filtered_3.npy"
 
-save_path = base_path + "data_analysis/testset_model_analysis_imgs/train0110_1/ideal/"
-test_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/ideal/ideal_data_pole_axis_RL_preset_batch_1.npy"
+#save_path = base_path + "data_analysis/testset_model_analysis_imgs/train0110_1/ideal/"
+#test_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/ideal/ideal_data_pole_axis_RL_preset_batch_1.npy"
 
 test_data = np.load(test_data_path)[1:]
 gc.collect()
@@ -1290,7 +1291,8 @@ gc.collect()
 train_data_paths = ["data_pole_axis_RL_preset_batch_0.npy",
                     "data_pole_axis_RL_preset_batch_1.npy",
                     "data_pole_axis_RL_preset_batch_2.npy",
-                    "data_pole_axis_RL_preset_batch_filtered_4.npy"]
+                    "data_pole_axis_RL_preset_batch_filtered_4.npy",
+                    "/ideal/ideal_data_pole_axis_RL_preset_batch_0.npy"]
 train_data_list = []
 for data_name in train_data_paths[:]:
     train_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/" + data_name
