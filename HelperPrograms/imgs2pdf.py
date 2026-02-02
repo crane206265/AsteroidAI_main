@@ -70,19 +70,22 @@ if __name__ == "__main__":
     
     base_path = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data_analysis/testset_model_analysis_imgs/"
     #folder_paths = ["train1122_1/", "train1129_1/", "train1129_2/"]
-    folder_paths = ["train1129_1/", "train0110_1/", "train0112_1/"]
+    folder_paths = ["train0131_1/ideal_batch1/",
+                    "train0131_1/RL_domain0_filtered_batch3/",
+                    "train0131_1/RL_domain1_batch4/"]
 
     # img lists for each folder (sorted)
     img_paths = [sorted(os.listdir(base_path + folder_path)) for folder_path in folder_paths]
+    min_len = min(len(img_paths[0]), min(len(img_paths[1]), len(img_paths[2])))
 
     img_triplets = [
         [base_path + folder_paths[0] + img_paths[0][i],
          base_path + folder_paths[1] + img_paths[1][i],
          base_path + folder_paths[2] + img_paths[2][i]]
-        for i in range(len(img_paths[0]))
+        for i in range(min_len)
     ]
 
     img2PdfHorizontal(
-        img_triplets[::4],
+        img_triplets[::],
         base_path + "img2PdfHorizontal_landscape.pdf"
     )

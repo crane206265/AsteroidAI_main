@@ -148,8 +148,8 @@ def run_one(local_i):
 
 def main():
     # ---- Range of global indices to compute ----
-    start_idx = 388#1300       # inclusive
-    final_idx = 500#1500     # exclusive (global index)
+    start_idx = 600#1300       # inclusive
+    final_idx = 1000#1500     # exclusive (global index)
     num_samples = final_idx - start_idx
 
     # Number of worker processes (tune according to your CPU)

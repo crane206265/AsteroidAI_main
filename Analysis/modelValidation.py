@@ -362,6 +362,234 @@ class QValueNet_CNN_B(nn.Module):
 
         return out
     
+# Updated for preserving spatial structure with 1x1 conv
+class QValueNet_CNN_B1(nn.Module):
+    def __init__(self, input_dim, hidden_dim=512, activation=nn.ReLU, dropout=0.3):
+        super().__init__()
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.activation = activation
+
+        # R_arr encoders (input: [B, C, 40, 20])
+        self.r_arr_encoder1 = nn.Sequential(
+            nn.Conv2d(1, 8, (9, 5)),  # -> [B, 8, 40, 20] # 1 channel / assumed input is already done padding=1 #(1, 16, 3)
+            self.activation(),
+            #nn.MaxPool2d(2)  # -> [B, 8, 20, 10] #deleted (260108) : to remain size 40x20
+        )
+
+        self.r_arr_encoder2 = nn.Sequential(
+            nn.Conv2d(8, 16, (5, 3)),  # assumed input is already done padding=1 #(16, 32, 3)
+            self.activation(), # -> [B, 16, 20, 10] # -> [B, 16, 40, 20]
+
+            # for preserving spatial structure, using size 1 kernal instead MLP
+            nn.Conv2d(16, 64, 1), # -> [B, 64, 20, 10] # -> [B, 16, 40, 20]
+            self.activation(),
+            #nn.AdaptiveAvgPool2d(1) # -> [B, 64, 1, 1]#deleted (260108) : to remain size 40x20
+        )
+
+        # Info encoder (input: [B, 1, 6])
+        self.info_encoder = nn.Sequential(
+            nn.Linear(6, 32),
+            self.activation(),
+            nn.Linear(32, 64) # -> [B, 1, 64]
+        )
+
+        # RL encoder (input: [B, 1, 4])
+        self.rl_encoder = nn.Sequential(
+            nn.Linear(4, 32),
+            self.activation(),
+            nn.Linear(32, 64) # -> [B, 1, 64]
+        )
+
+        # Lightcurves encoder (input: [B, 2, 100])
+        self.lc_encoder1 = nn.Sequential(
+            nn.Conv1d(2, 16, kernel_size=15),
+            self.activation(),
+            nn.MaxPool1d(2),   # -> [B, 16, 50]
+        )
+
+        self.lc_encoder2 = nn.Sequential(
+            nn.Conv1d(16, 32, kernel_size=9),
+            self.activation(), # -> [B, 32, 50]
+
+            nn.Conv1d(32, 64, 1), # -> [B, 64, 50]
+            self.activation(),
+            nn.AdaptiveAvgPool1d(8), # -> [B, 64, 8]
+
+            nn.Flatten(1, -1), # -> [B, 512]
+            nn.Linear(64*8, 64), # -> [B, 64]
+            self.activation(),
+            nn.Dropout(dropout)
+        )
+
+        # Fusion & Head
+        self.head = nn.Sequential(
+            nn.Linear(64 + 64 + 64 + 64, self.hidden_dim),
+            self.activation(),
+            nn.Dropout(dropout),
+
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            self.activation(),
+            nn.Dropout(dropout),
+
+            nn.Linear(self.hidden_dim, 256),
+            self.activation(),
+            nn.Dropout(dropout),
+
+            nn.Linear(256, 1)  # e.g., class count or regression value
+        )
+
+    def r_padding(self, x, pad=(1, 1)):
+        N, C, H, W = x.shape
+        pad_H = pad[0]
+        pad_W = pad[1]
+
+        out = torch.full((N, C, H + 2*pad_H, W + 2*pad_W), fill_value=0.0, dtype=x.dtype, device=x.device)
+        out[:, :, pad_H:pad_H+H, pad_W:pad_W+W] = x
+        out[:, :, :, :pad_W] = torch.roll(torch.flip(out[:, :, :, pad_W:pad_W+pad_W], (-2,)), 20, -1)
+        out[:, :, :, -pad_W:] = torch.roll(torch.flip(out[:, :, :, -pad_W-pad_W:-pad_W], (-2,)), 20, -1)
+        out[:, :, :pad_H, pad_W:pad_W+W] = x[:, :, -pad_H:, :]
+        out[:, :, -pad_H:, pad_W:pad_W+W] = x[:, :, :pad_H, :]
+        return out
+
+    def lc_padding(self, x, pad=1):
+        N, C, W = x.shape
+
+        out = torch.full((N, C, W + 2*pad), fill_value=0.0, dtype=x.dtype, device=x.device)
+        out[:, :, pad:pad+W] = x
+        out[:, :, :pad] = x[:, :, -pad:]
+        out[:, :, -pad:] = x[:, :, :pad]
+        return out
+
+    def shifter(self, img, dx=0, dy=0):
+        PI = 3.14159265358979
+        img_F = torch.fft.fft2(img)
+        N, M = img.shape
+        dev = img.device
+
+        ky = torch.fft.fftfreq(N, device=dev)[:, None]
+        kx = torch.fft.fftfreq(M, device=dev)[None, :]
+        phase = torch.exp(-2j*PI*(kx*dx + ky*dy))
+        new_img = torch.fft.ifft2(img_F*phase)
+        return new_img.real
+
+    def sphere_latlon_tensor(self, lon, lat, Nlon=40, Nlat=20):
+        # Added w/ GPT (26.01.11)
+        lon = lon.long()
+        lat = lat.long()
+
+        # lon은 항상 주기 wrap
+        lon = torch.remainder(lon, Nlon)
+
+        half = Nlon // 2
+        m1 = lat < 0
+        m2 = (~m1) & (lat >= Nlat)
+
+        lat = torch.where(m1, -lat, lat)
+        lon = torch.where(m1, lon + half, lon)
+
+        lat = torch.where(m2, 2*(Nlat-1) - lat, lat)
+        lon = torch.where(m2, lon + half, lon)
+
+        # 보정 후에도 다시 wrap
+        lon = torch.remainder(lon, Nlon)
+        return lon, lat
+
+
+    def r_a_gather(self, r_arr_feat, lon, lat, size=3):
+        # Added w/ GPT (26.01.11)
+        if size%2 == 0: raise ValueError("size must be odd")
+
+        B = r_arr_feat.shape[0]
+        b_idx = torch.arange(B, device=r_arr_feat.device)
+
+        r_a_elems = []
+        for i in range(-size//2, size//2+1):
+            for j in range(-size//2, size//2+1):
+                lon_temp, lat_temp = self.sphere_latlon_tensor(lon+i, lat+j)
+                r_a_elems.append(r_arr_feat[b_idx, :, lon_temp, lat_temp])
+        #r_a = torch.cat(r_a_elems, dim=1)
+        r_a = r_a_elems[0]
+        for i in range(1, len(r_a_elems)): r_a = r_a + r_a_elems[i]
+        r_a = r_a / (size**2)
+
+        return r_a
+
+    def forward(self, X):
+        if X.dim() == 3 and X.size(1) == 1:
+            X = X.squeeze(1)  # [B, input_dim]
+        PI = 3.14159265358979
+
+        r_arr = X[..., :800].reshape((X.shape[0], 1, 40, 20))
+        lc_target = X[..., 800:900].reshape((X.shape[0], 1, 100))
+        lc_pred = X[..., 900:1000].reshape((X.shape[0], 1, 100))
+        lc_info = X[..., 1000:1006]
+        rl_info = X[..., 1006:]
+
+        #r_arr_feat = torch.transpose(r_arr, -2, -1)
+        #r_arr_feat = self.r_padding(r_arr_feat, pad=(4, 2))
+        r_arr_feat = self.r_padding(r_arr, pad=(4, 2))
+        r_arr_feat = self.r_arr_encoder1(r_arr_feat)
+        r_arr_feat = self.r_padding(r_arr_feat, pad=(2, 1))
+        r_arr_feat = self.r_arr_encoder2(r_arr_feat)
+        #r_arr_feat = torch.squeeze(r_arr_feat, dim=-1)
+        #r_arr_feat = torch.squeeze(r_arr_feat, dim=-1)
+
+        ##############################################################
+        # select action coord. from feature map (GPT, 260108)
+        lon_raw = rl_info[..., 0]  # [B]  (아직 embedding 전, 0~1 가정)
+        lat_raw = rl_info[..., 1]  # [B]
+
+        lon_idx = torch.floor(lon_raw * 40).clamp(0, 39).long()
+        lat_idx = torch.floor(lat_raw * 20).clamp(0, 19).long()
+
+        # r_arr_feat가 [B, 64, 40, 20]일 때:
+        B = r_arr_feat.shape[0]
+        b_idx = torch.arange(B, device=r_arr_feat.device)
+        r_a = r_arr_feat[b_idx, :, lon_idx, lat_idx]     # [B, 64]
+        #r_a = self.r_a_gather(r_arr_feat, lon_idx, lat_idx, size=3) # [B, 64]
+        ##############################################################
+
+        lc = torch.cat([lc_target, lc_pred], dim=1)
+        lc_feat = self.lc_padding(lc, pad=7)          # [B, 2, 114]
+        lc_feat = self.lc_encoder1(lc_feat)           # [B, 16, 50]
+        lc_feat = self.lc_padding(lc_feat, pad=4)     # [B, 16, 58]
+        lc_feat = self.lc_encoder2(lc_feat)           # [B, 64, 1]
+        #lc_feat = torch.squeeze(lc_feat, dim=-1)      # [B, 64]
+
+        info_feat = self.info_encoder(lc_info)
+        #info_feat = torch.squeeze(info_feat, dim=1)
+
+        # action direction embedding
+        lon_raw = rl_info[..., 0]  # [B]  (아직 embedding 전, 0~1 가정)
+        lat_raw = rl_info[..., 1]  # [B]
+        action_emb = torch.stack([
+            torch.sin(2*PI*lon_raw),
+            torch.cos(2*PI*lon_raw),
+            torch.sin(PI*lat_raw),
+            torch.cos(PI*lat_raw),
+        ], dim=1)  # [B,4]
+        rl_feat = self.rl_encoder(action_emb)
+        #rl_info = torch.unsqueeze(rl_info, dim=1)
+        #rl_feat = self.rl_encoder(rl_info)
+        #rl_feat = torch.squeeze(rl_feat, dim=1)
+
+        #fusion_feat = torch.cat((r_arr_feat, lc_feat, info_feat, rl_feat), dim=1)
+        fusion_feat = torch.cat((r_a, lc_feat, info_feat, rl_feat), dim=1)
+        out = self.head(fusion_feat)
+        #shift_out = self.shift_head(fusion_feat)
+
+        #self.x_shift = torch.unsqueeze(shift_out[..., 0], dim=1)
+        #self.y_shift = torch.unsqueeze(shift_out[..., 1], dim=1)
+
+        #out = self.shifter(out, dx=20*self.x_shift, dy=10*self.y_shift)
+
+        out = 6 * 2 / PI * torch.atan(out/0.8) #out/0.8
+        #out = 7 * 2 / PI * torch.atan(1.5 * out)
+
+        return out
+    
 # Model B2
 class QValueNet_CNN_B2(nn.Module):
     def __init__(self, input_dim, hidden_dim=512, activation=nn.ReLU, dropout=0.3):
@@ -842,6 +1070,8 @@ def load_model(model_path, model_type, hidden_dim=1024):
         model = QValueNet_CNN_A(input_dim=1010, hidden_dim=hidden_dim, activation=nn.ELU, dropout=0.15).to(device)
     elif model_type == 'B':
         model = QValueNet_CNN_B(input_dim=1010, hidden_dim=hidden_dim, activation=nn.ELU, dropout=0.15).to(device)
+    elif model_type == 'B1':
+        model = QValueNet_CNN_B1(input_dim=1010, hidden_dim=hidden_dim, activation=nn.ELU, dropout=0.15).to(device)
     elif model_type == 'B2':
         model = QValueNet_CNN_B2(input_dim=1010, hidden_dim=hidden_dim, activation=nn.ELU, dropout=0.15).to(device)
     elif model_type == 'C':
@@ -1273,16 +1503,19 @@ def _setRewardMapPlot(ax:plt.Axes, Etheta, Stheta):
 # -------------------- Main Analysis --------------------
 
 #model_path = "C:/Users/dlgkr/Downloads/train1129_2/50model.pt"
-#model_path = "C:/Users/dlgkr/Downloads/train0110_1/60model.pt"
-model_path = "C:/Users/dlgkr/Downloads/train0123_1/40model.pt"
-model_type = 'B2'
+#model_path = "C:/Users/dlgkr/Downloads/train0110_1/60model.pt" #B -> B1 (do not use B)
+#model_path = "C:/Users/dlgkr/Downloads/train0123_1/40model.pt" #B2
+#model_path = "C:/Users/dlgkr/Downloads/train0123_2/40model.pt" #B1
+model_path = "C:/Users/dlgkr/Downloads/train0131_1/30model.pt" #B1
+model_type = 'B1'
 hidden_dim = 4096
 
 base_path = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/"
-save_path = base_path + "data_analysis/testset_model_analysis_imgs/train0123_1/"
+save_path = base_path + "data_analysis/testset_model_analysis_imgs/train0131_1/"
 test_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/data_pole_axis_RL_preset_batch_filtered_3.npy"
+#test_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/RL_domain1/data_pole_axis_RL_preset_batch_4.npy"
 
-#save_path = base_path + "data_analysis/testset_model_analysis_imgs/train0110_1/ideal/"
+#save_path = base_path + "data_analysis/testset_model_analysis_imgs/train0131_1/ideal/"
 #test_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/ideal/ideal_data_pole_axis_RL_preset_batch_1.npy"
 
 test_data = np.load(test_data_path)[1:]
@@ -1293,9 +1526,15 @@ train_data_paths = ["data_pole_axis_RL_preset_batch_0.npy",
                     "data_pole_axis_RL_preset_batch_2.npy",
                     "data_pole_axis_RL_preset_batch_filtered_4.npy",
                     "/ideal/ideal_data_pole_axis_RL_preset_batch_0.npy"]
+train_data_paths = ["RL_domain1/data_pole_axis_RL_preset_batch_0.npy",
+                    "RL_domain1/data_pole_axis_RL_preset_batch_1.npy",
+                    "RL_domain1/data_pole_axis_RL_preset_batch_2.npy",
+                    "RL_domain1/data_pole_axis_RL_preset_batch_3.npy",
+                    "/ideal/ideal_data_pole_axis_RL_preset_batch_0.npy"] #for 0131_1
 train_data_list = []
 for data_name in train_data_paths[:]:
     train_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/" + data_name
+    print(train_data_path)
     train_data_list.append(np.load(train_data_path)[1:])
 train_data = np.concatenate(train_data_list, axis=0)
 gc.collect()
