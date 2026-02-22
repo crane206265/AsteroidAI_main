@@ -506,7 +506,7 @@ class AstEnv():
         ax4.set_ylabel('reward')
 
         # ax5 : r_arr
-        r_arr_img = ax5.imshow(r_arr, vmax=8, vmin=12)
+        r_arr_img = ax5.imshow(r_arr.T, vmax=8, vmin=12)
         ax5.set_title("r_arr")
         plt.colorbar(r_arr_img, ax=ax5, shrink=0.75)
         ax5.plot([0, 39], [Stheta, Stheta], color='orangered', label='Sun Direction', linewidth=2, linestyle='dashed')
@@ -514,9 +514,9 @@ class AstEnv():
         ax5.legend()
 
         # ax6 : (Predicted) Reward Map + Selected Actions
-        reward_map_img = ax6.imshow(reward_map, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)))
-        ax6.scatter(sel_actions[:, 0], sel_actions[:, 1], s=80, facecolors='none', edgecolors='r')
-        ax6.scatter(best_action[0], best_action[1], marker='*', color='r')
+        reward_map_img = ax6.imshow(reward_map.T, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)))
+        ax6.scatter(40*sel_actions[:, 0], 20*sel_actions[:, 1], s=80, facecolors='none', edgecolors='r')
+        ax6.scatter(40*best_action[0], 20*best_action[1], marker='*', color='r')
         ax6.set_title("(Predicted) Reward Map + Selected Actions")
         plt.colorbar(reward_map_img, ax=ax6, shrink=0.75)
         self._setRewardMapPlot(ax=ax6, Etheta=Etheta, Stheta=Stheta)
@@ -527,7 +527,7 @@ class AstEnv():
 
     def _plotAsteroid(self, ax:plt.Axes, gridX, gridY, gridZ, elev=30, azim=-60, lim_set=(-10, 10)):
         ax.plot_surface(gridX, gridY, gridZ)
-        ax.set_title("Predicted Model (Elev.=%ddeg, Azim.=%ddeg)"%(elev, azim))
+        ax.set_title("Asteroid (Elev.=%ddeg, Azim.=%ddeg)"%(elev, azim))
         ax.view_init(elev=elev, azim=azim)
         ax.set_box_aspect((1, 1, 1))
         ax.set_xlim(lim_set)
