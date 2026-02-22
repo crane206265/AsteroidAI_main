@@ -1,5 +1,7 @@
 import numpy as np
 import numpy.linalg as LA
+import torch
+from torch import nn
 import matplotlib.pyplot as plt
 import random
 from tqdm import tqdm
@@ -7,6 +9,8 @@ from tqdm import tqdm
 import utils
 
 import gc
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 PI = 3.1415926535
@@ -393,6 +397,9 @@ class AstEnv():
                 self.lc_pred = np.ones(self.lc_unit_len)
                 _, self.reward0, _, _ = self.step((0, 0, 0, 0)) #initialize/recalculate lc_pred
                 
+                # 26.02.22 
+                self.lc_pred0 = self.lc_pred.copy()
+
                 if self.reward0 > self.err_min and self.reward0 < self.total_threshold:#self.err_min+30:
                     break
 
@@ -441,7 +448,7 @@ class AstEnv():
         lc_min = np.min(input_lc)
         return lc_max - lc_min
     
-    def show(self, path, name="None"):
+    def show(self, reward, path, name="None"):
         fig = plt.figure(figsize=(13, 5))
         ax1 = fig.add_subplot(1, 2, 1)
         ax2 = fig.add_subplot(1, 2, 2, projection='3d')
@@ -452,10 +459,12 @@ class AstEnv():
         gridY = self.ast.pos_cart_arr[:, :, 1]
         gridZ = self.ast.pos_cart_arr[:, :, 2]
 
-        ax1.plot(self.target_lc, color='coral', linestyle='solid') #black
-        ax1.plot(self.lc_pred, color='coral', linestyle='dashed')
+        ax1.plot(self.target_lc, color='coral', linestyle='solid', label='target') #black
+        ax1.plot(self.lc_pred, color='coral', linestyle='dashed', label='pred.')
+        ax1.plot(self.lc_pred0, color='gray', alpha=0.3, linestyle='dotted')
+        ax1.set_title("Lightcurve (Reward = %.2f)"%(reward))
+        ax1.legend()
         ax1.set_ylim([np.min(self.target_lc)-5, np.max(self.target_lc)+5])
-        ax1.set_title("Lightcurve")
 
         ax2.set_box_aspect((1, 1, 1))
         ax2.set_xlim(lim_set)
@@ -470,155 +479,313 @@ class AstEnv():
         
         plt.savefig(path+name)
         #plt.show()
+        plt.close()
 
-class Runner():
-    def __init__(self, env:AstEnv, state_dim, action_dim, prec = 5.0):
+# Updated for preserving spatial structure with 1x1 conv
+class QValueNet_CNN_B1(nn.Module):
+    def __init__(self, input_dim, hidden_dim=512, activation=nn.ReLU, dropout=0.3):
+        super().__init__()
+
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.activation = activation
+
+        # R_arr encoders (input: [B, C, 40, 20])
+        self.r_arr_encoder1 = nn.Sequential(
+            nn.Conv2d(1, 8, (9, 5)),  # -> [B, 8, 40, 20] # 1 channel / assumed input is already done padding=1 #(1, 16, 3)
+            self.activation(),
+            #nn.MaxPool2d(2)  # -> [B, 8, 20, 10] #deleted (260108) : to remain size 40x20
+        )
+
+        self.r_arr_encoder2 = nn.Sequential(
+            nn.Conv2d(8, 16, (5, 3)),  # assumed input is already done padding=1 #(16, 32, 3)
+            self.activation(), # -> [B, 16, 20, 10] # -> [B, 16, 40, 20]
+
+            # for preserving spatial structure, using size 1 kernal instead MLP
+            nn.Conv2d(16, 64, 1), # -> [B, 64, 20, 10] # -> [B, 16, 40, 20]
+            self.activation(),
+            #nn.AdaptiveAvgPool2d(1) # -> [B, 64, 1, 1]#deleted (260108) : to remain size 40x20
+        )
+
+        # Info encoder (input: [B, 1, 6])
+        self.info_encoder = nn.Sequential(
+            nn.Linear(6, 32),
+            self.activation(),
+            nn.Linear(32, 64) # -> [B, 1, 64]
+        )
+
+        # RL encoder (input: [B, 1, 4])
+        self.rl_encoder = nn.Sequential(
+            nn.Linear(4, 32),
+            self.activation(),
+            nn.Linear(32, 64) # -> [B, 1, 64]
+        )
+
+        # Lightcurves encoder (input: [B, 2, 100])
+        self.lc_encoder1 = nn.Sequential(
+            nn.Conv1d(2, 16, kernel_size=15),
+            self.activation(),
+            nn.MaxPool1d(2),   # -> [B, 16, 50]
+        )
+
+        self.lc_encoder2 = nn.Sequential(
+            nn.Conv1d(16, 32, kernel_size=9),
+            self.activation(), # -> [B, 32, 50]
+
+            nn.Conv1d(32, 64, 1), # -> [B, 64, 50]
+            self.activation(),
+            nn.AdaptiveAvgPool1d(8), # -> [B, 64, 8]
+
+            nn.Flatten(1, -1), # -> [B, 512]
+            nn.Linear(64*8, 64), # -> [B, 64]
+            self.activation(),
+            nn.Dropout(dropout)
+        )
+
+        # Fusion & Head
+        self.head = nn.Sequential(
+            nn.Linear(64 + 64 + 64 + 64, self.hidden_dim),
+            self.activation(),
+            nn.Dropout(dropout),
+
+            nn.Linear(self.hidden_dim, self.hidden_dim),
+            self.activation(),
+            nn.Dropout(dropout),
+
+            nn.Linear(self.hidden_dim, 256),
+            self.activation(),
+            nn.Dropout(dropout),
+
+            nn.Linear(256, 1)  # e.g., class count or regression value
+        )
+
+    def r_padding(self, x, pad=(1, 1)):
+        N, C, H, W = x.shape
+        pad_H = pad[0]
+        pad_W = pad[1]
+
+        out = torch.full((N, C, H + 2*pad_H, W + 2*pad_W), fill_value=0.0, dtype=x.dtype, device=x.device)
+        out[:, :, pad_H:pad_H+H, pad_W:pad_W+W] = x
+        out[:, :, :, :pad_W] = torch.roll(torch.flip(out[:, :, :, pad_W:pad_W+pad_W], (-2,)), 20, -1)
+        out[:, :, :, -pad_W:] = torch.roll(torch.flip(out[:, :, :, -pad_W-pad_W:-pad_W], (-2,)), 20, -1)
+        out[:, :, :pad_H, pad_W:pad_W+W] = x[:, :, -pad_H:, :]
+        out[:, :, -pad_H:, pad_W:pad_W+W] = x[:, :, :pad_H, :]
+        return out
+
+    def lc_padding(self, x, pad=1):
+        N, C, W = x.shape
+
+        out = torch.full((N, C, W + 2*pad), fill_value=0.0, dtype=x.dtype, device=x.device)
+        out[:, :, pad:pad+W] = x
+        out[:, :, :pad] = x[:, :, -pad:]
+        out[:, :, -pad:] = x[:, :, :pad]
+        return out
+
+    def shifter(self, img, dx=0, dy=0):
+        PI = 3.14159265358979
+        img_F = torch.fft.fft2(img)
+        N, M = img.shape
+        dev = img.device
+
+        ky = torch.fft.fftfreq(N, device=dev)[:, None]
+        kx = torch.fft.fftfreq(M, device=dev)[None, :]
+        phase = torch.exp(-2j*PI*(kx*dx + ky*dy))
+        new_img = torch.fft.ifft2(img_F*phase)
+        return new_img.real
+
+    def sphere_latlon_tensor(self, lon, lat, Nlon=40, Nlat=20):
+        # Added w/ GPT (26.01.11)
+        lon = lon.long()
+        lat = lat.long()
+
+        # lon은 항상 주기 wrap
+        lon = torch.remainder(lon, Nlon)
+
+        half = Nlon // 2
+        m1 = lat < 0
+        m2 = (~m1) & (lat >= Nlat)
+
+        lat = torch.where(m1, -lat, lat)
+        lon = torch.where(m1, lon + half, lon)
+
+        lat = torch.where(m2, 2*(Nlat-1) - lat, lat)
+        lon = torch.where(m2, lon + half, lon)
+
+        # 보정 후에도 다시 wrap
+        lon = torch.remainder(lon, Nlon)
+        return lon, lat
+
+
+    def r_a_gather(self, r_arr_feat, lon, lat, size=3):
+        # Added w/ GPT (26.01.11)
+        if size%2 == 0: raise ValueError("size must be odd")
+
+        B = r_arr_feat.shape[0]
+        b_idx = torch.arange(B, device=r_arr_feat.device)
+
+        r_a_elems = []
+        for i in range(-size//2, size//2+1):
+            for j in range(-size//2, size//2+1):
+                lon_temp, lat_temp = self.sphere_latlon_tensor(lon+i, lat+j)
+                r_a_elems.append(r_arr_feat[b_idx, :, lon_temp, lat_temp])
+        #r_a = torch.cat(r_a_elems, dim=1)
+        r_a = r_a_elems[0]
+        for i in range(1, len(r_a_elems)): r_a = r_a + r_a_elems[i]
+        r_a = r_a / (size**2)
+
+        return r_a
+
+    def forward(self, X):
+        if X.dim() == 3 and X.size(1) == 1:
+            X = X.squeeze(1)  # [B, input_dim]
+        PI = 3.14159265358979
+
+        r_arr = X[..., :800].reshape((X.shape[0], 1, 40, 20))
+        lc_target = X[..., 800:900].reshape((X.shape[0], 1, 100))
+        lc_pred = X[..., 900:1000].reshape((X.shape[0], 1, 100))
+        lc_info = X[..., 1000:1006]
+        rl_info = X[..., 1006:]
+
+        #r_arr_feat = torch.transpose(r_arr, -2, -1)
+        #r_arr_feat = self.r_padding(r_arr_feat, pad=(4, 2))
+        r_arr_feat = self.r_padding(r_arr, pad=(4, 2))
+        r_arr_feat = self.r_arr_encoder1(r_arr_feat)
+        r_arr_feat = self.r_padding(r_arr_feat, pad=(2, 1))
+        r_arr_feat = self.r_arr_encoder2(r_arr_feat)
+        #r_arr_feat = torch.squeeze(r_arr_feat, dim=-1)
+        #r_arr_feat = torch.squeeze(r_arr_feat, dim=-1)
+
+        ##############################################################
+        # select action coord. from feature map (GPT, 260108)
+        lon_raw = rl_info[..., 0]  # [B]  (아직 embedding 전, 0~1 가정)
+        lat_raw = rl_info[..., 1]  # [B]
+
+        lon_idx = torch.floor(lon_raw * 40).clamp(0, 39).long()
+        lat_idx = torch.floor(lat_raw * 20).clamp(0, 19).long()
+
+        # r_arr_feat가 [B, 64, 40, 20]일 때:
+        B = r_arr_feat.shape[0]
+        b_idx = torch.arange(B, device=r_arr_feat.device)
+        r_a = r_arr_feat[b_idx, :, lon_idx, lat_idx]     # [B, 64]
+        #r_a = self.r_a_gather(r_arr_feat, lon_idx, lat_idx, size=3) # [B, 64]
+        ##############################################################
+
+        lc = torch.cat([lc_target, lc_pred], dim=1)
+        lc_feat = self.lc_padding(lc, pad=7)          # [B, 2, 114]
+        lc_feat = self.lc_encoder1(lc_feat)           # [B, 16, 50]
+        lc_feat = self.lc_padding(lc_feat, pad=4)     # [B, 16, 58]
+        lc_feat = self.lc_encoder2(lc_feat)           # [B, 64, 1]
+        #lc_feat = torch.squeeze(lc_feat, dim=-1)      # [B, 64]
+
+        info_feat = self.info_encoder(lc_info)
+        #info_feat = torch.squeeze(info_feat, dim=1)
+
+        # action direction embedding
+        lon_raw = rl_info[..., 0]  # [B]  (아직 embedding 전, 0~1 가정)
+        lat_raw = rl_info[..., 1]  # [B]
+        action_emb = torch.stack([
+            torch.sin(2*PI*lon_raw),
+            torch.cos(2*PI*lon_raw),
+            torch.sin(PI*lat_raw),
+            torch.cos(PI*lat_raw),
+        ], dim=1)  # [B,4]
+        rl_feat = self.rl_encoder(action_emb)
+        #rl_info = torch.unsqueeze(rl_info, dim=1)
+        #rl_feat = self.rl_encoder(rl_info)
+        #rl_feat = torch.squeeze(rl_feat, dim=1)
+
+        #fusion_feat = torch.cat((r_arr_feat, lc_feat, info_feat, rl_feat), dim=1)
+        fusion_feat = torch.cat((r_a, lc_feat, info_feat, rl_feat), dim=1)
+        out = self.head(fusion_feat)
+        #shift_out = self.shift_head(fusion_feat)
+
+        #self.x_shift = torch.unsqueeze(shift_out[..., 0], dim=1)
+        #self.y_shift = torch.unsqueeze(shift_out[..., 1], dim=1)
+
+        #out = self.shifter(out, dx=20*self.x_shift, dy=10*self.y_shift)
+
+        out = 6 * 2 / PI * torch.atan(out/0.8) #out/0.8
+        #out = 7 * 2 / PI * torch.atan(1.5 * out)
+
+        return out
+
+class AgentRunner():
+    def __init__(self, env:AstEnv, model:QValueNet_CNN_B1):
         self.env = env
         self.done = True
         self.passed = False
-        self.prec = prec
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.data_set_arr = np.zeros((1, self.state_dim+self.action_dim+2))
+
+        self.model = model
 
     def reset(self, passed):
         self.state = self.env.reset(passed)
+        self.reward = self.env.reward0
         self.done = False
         self.passed = False
 
-    def run(self, env_no, random=True, save=False):
-        prec = self.prec
-
-        #30
-        get_env_num = int(30 * (self.env.reward_threshold - max(self.env.reward0, 0)) / self.env.reward_threshold)#int(30 * (self.env.reward_threshold - self.env.reward0) / self.env.reward_threshold)
-        get = 0
-        #reward_threshold_list = np.linspace(max(self.env.reward0, 0), self.env.reward_threshold, get_env_num)
-        reward_threshold_list = np.linspace(self.env.reward0, self.env.reward_threshold, get_env_num) #260108
-        if reward_threshold_list.shape[0] == 0:
-            return
+    def input_data(self, state):
+        # GPU 최적화 필요 !!!!!!!!!!!!!!
+        input_list = []
+        for idx in range(800):
+            i = idx//int(20)
+            j = idx%int(20)
+            phi_action = (i/40)%1
+            theta_action = (j/20)%1
+            actions = np.array([phi_action, theta_action, 0.1, 0.1])
+            input = torch.tensor(np.concatenate((state, actions))).float().to(device)
+            input_list.append(torch.unsqueeze(input, 0))
+        total_input = torch.concat(input_list, dim=0)
+        return total_input
+    
+    def action_selector(self, pred_map):
+        # NEED TO IMPLEMENT
         
-        show_bool = True
-        with tqdm(total=get_env_num, desc="Reward Map Generation") as pbar:
-            for t in range(MAX_STEPS):
-                if self.done:
-                    self.reset(self.passed)
+        ####################
+        # TOP-K Selector
+        ####################
 
-                actions = np.random.uniform(-prec, prec, 4)
-                actions[:2] = np.mod(actions[:2], 1.0)
-                actions[2:] = 0.1
+        # pred_map : 20*40
+        K = 20
+        idxs = np.argsort(pred_map.reshape(-1))[::-1][:K]
+        actions = np.stack([np.array([((idx%int(40))/40)%1, ((idx//int(40))/20)%1, 0.1, 0.1]) for idx in idxs], axis=0)
 
-                self.state, reward, self.done, self.passed = self.env.step(actions)
-
-                if reward >= reward_threshold_list[get]:
-                    self.make_map(reward, env_no, random, save)
-                    get += 1
-                    pbar.update(1)
-
-                if get == get_env_num: break
-
-                if t%4 == 0 and get == 0:
-                    #print(" | Reward : {:7.5g}".format(reward), end='')
-                    #print(" | actions : [{:6.05g}, {:6.05g}, {:6.05g}, {:6.05g}]".format(actions[0], actions[1], actions[2], actions[3]), end='')
-                    #print(" | done/pass : "+str(self.done)+"/"+str(self.passed)+" "+str(self.env.max_reward))
-                    if t%20 == 0:
-                        show_bool = True
-
-                if show_bool:
-                    #print("show_passed : "+str(reward)+" | obs_lc_num : "+str(self.env.obs_lc_num))
-                    #self.env.show(str(data_num)+"_"+str(et)+"_"+str(k)+"_"+str(int(reward*100)/100)+"_"+"0402ast.png")
-                    #plt.close()
-                    show_bool = False
-
-                if self.done and self.passed: break
-                
-    def make_map(self, ref_reward, env_no, random, save):
-        ratio_action_set = [(0.1, 0.1)]
+        test_rewards = np.zeros((K))
         ref_ast = self.env.ast.copy()
-        resol = 1
-
-        rot_axis = self.env.initial_eps * 180/np.pi
-        rot_axis[0] = rot_axis[0]%360
-        rot_axis[1] = rot_axis[1]%180
-
-        path = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/reward_maps/"
-
-        for ratio_actions in ratio_action_set:
-            delta_map_temp = np.zeros((resol*self.env.Nphi, resol*self.env.Ntheta))
-            #print("\nGenerating Map... (at Reward="+str(int(ref_reward*100)/100)+")", end='')
-            for idx in range(self.env.Nphi*self.env.Ntheta*resol*resol):
-                i = idx//int(resol*self.env.Ntheta)
-                j = idx%int(resol*self.env.Ntheta)
-
-                if random:
-                    phi_action = (i/(resol*self.env.Nphi) + np.random.normal(0, 0.05, 1)[0])%1
-                    theta_action = (j/(resol*self.env.Ntheta) + np.random.normal(0, 0.05, 1)[0])%1
-                else:
-                    phi_action = (i/(resol*self.env.Nphi))%1
-                    theta_action = (j/(resol*self.env.Ntheta))%1
-                actions = np.array([phi_action, theta_action, ratio_actions[0], ratio_actions[1]])
-                
-                _, reward, _, _ = self.env.step(actions, update=False)
-                delta_map_temp[i, j] = reward - ref_reward
-                self.data_set_arr = np.concatenate(
-                    (self.data_set_arr, np.array([np.concatenate(
-                            (self.state, actions, np.array([delta_map_temp[i, j], ref_reward]))
-                        )])
-                    ), axis=0
-                )
-                
-                self.env.ast = ref_ast.copy()
-
-            if save:
-                phi_ticks = self.__map_tick_list(resol, self.env.Nphi, 360)
-                theta_ticks = self.__map_tick_list(resol, self.env.Ntheta, 180)
+        for i in range(K):
+            _, reward, _, _ = self.env.step(actions[i, :], update=False)
+            self.env.ast = ref_ast.copy()
+            test_rewards[i] = reward + 0
         
-                circle_points = 200
-                Edirs = np.zeros((2, circle_points))
-                Sdirs = np.zeros((2, circle_points))
-                for t in range(circle_points):
-                    Edir = self.env.R_eps.T@self.env.orb2geo((self.env.lc_info[3:6]).T, 2*np.pi*t/circle_points)   
-                    Edirs[0, t] = (np.arctan2(Edir[1], Edir[0]) * 180/np.pi)%360
-                    Edirs[1, t] = (np.arccos(Edir[2]/LA.norm(Edir)) * 180/np.pi)%180
-                    Sdir = self.env.R_eps.T@self.env.orb2geo((self.env.lc_info[0:3]).T, 2*np.pi*t/circle_points)
-                    Sdirs[0, t] = (np.arctan2(Sdir[1], Sdir[0]) * 180/np.pi)%360
-                    Sdirs[1, t] = (np.arccos(Sdir[2]/LA.norm(Sdir)) * 180/np.pi)%180
+        if np.max(test_rewards) < self.reward: return None
+        return actions[np.argmax(test_rewards), :]
+        
+    def run(self, env_i, save_path):
+        ref_ast = self.env.ast.copy()
+        self.env.ast = ref_ast.copy()
 
-                delta_map_temp = delta_map_temp.T
+        self.reset(self.passed)
+        for t in tqdm(range(MAX_STEPS)):
+            if self.done:
+                if self.passed:
+                    print("PASSED")
+                    break
+                #else: print("Did not converged to valid solution.")
                 
-                grady, gradx = np.gradient(delta_map_temp)
-                x = np.arange(delta_map_temp.shape[1])
-                y = np.arange(delta_map_temp.shape[0])
-                X, Y = np.meshgrid(x, y)
+            
+            pred = np.zeros((20, 40))
+            self.model.eval()
+            with torch.no_grad():
+                input = self.input_data(self.state[:1006])
+                rewards = self.model(input)
+                pred = rewards.cpu().numpy().reshape(40, 20).T
 
+            action = self.action_selector(pred)
+            if action is None:
+                print("No Improving Action Detected")
+                break
+            self.state, self.reward, self.done, self.passed = self.env.step(action)
 
-                plt.figure(figsize=(20, 11))
-                plt.imshow(delta_map_temp)
-
-                plt.plot(rot_axis[0]*resol*self.env.Nphi/360, rot_axis[1]*resol*self.env.Ntheta/180, color='red', marker='X', markersize=10)
-                plt.plot(((rot_axis[0]+180)%360)*resol*self.env.Nphi/360, (180-rot_axis[1])*resol*self.env.Ntheta/180, color='blue', marker='X', markersize=10)
+            if t%1 == 0:
+                self.env.show(self.reward, path=save_path, name='Env No.%02d t = %02d.png'%(env_i, t))
                 
-                for i in range(circle_points):
-                    plt.plot(Edirs[0, i]*resol*self.env.Nphi/360, Edirs[1, i]*resol*self.env.Ntheta/180, color='blue', marker='.', markersize=6)
-                    plt.plot(Sdirs[0, i]*resol*self.env.Nphi/360, Sdirs[1, i]*resol*self.env.Ntheta/180, color='red', marker='.', markersize=6)
-                
-                plt.colorbar()
-                plt.quiver(X, Y, gradx, grady, color='gold', angles='xy', headwidth=2, headlength=4)
-                name = "Env No."+str(env_no)+" (ref_reward="+str(int(ref_reward*1000)/1000)+") Delta+Grad Reward MAP"
-                name_ratio = "(Ratio actions = ["+str(ratio_actions[0])+", "+str(ratio_actions[1])+"])"
-                name_rot_axis = "(Rot_Axis = ["+str(int(100*rot_axis[0])/100)+", "+str(int(100*rot_axis[1])/100)+"])"
-                plt.title(name+"\n"+name_ratio)
-                plt.xticks(phi_ticks[0], phi_ticks[1])
-                plt.yticks(theta_ticks[0], theta_ticks[1])
-                plt.savefig(path+name+name_ratio+".png", dpi=300)
-                plt.close()            
-
-    def __map_tick_list(self, resol:int, N_ang:int, max_ang):
-        tick_num = 12
-        tick_value = []
-        tick_label = []
-
-        for i in range(tick_num):
-            tick_value.append(i*(resol*N_ang)/tick_num)
-            tick_label.append(str(i*int((max_ang*100)//tick_num)/100))
-
-        return tick_value, tick_label
+    
