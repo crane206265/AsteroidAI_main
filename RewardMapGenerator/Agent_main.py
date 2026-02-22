@@ -18,7 +18,7 @@ MODEL_PATH = "C:/Users/dlgkr/Downloads/train0208_1/40model.pt"
 
 N_set = (40, 20)
 lightcurve_unit_len = 100
-reward_domain = [-100, 65]
+reward_domain = [-200, 65]
 
 # Global Variables for each Worker Processors
 X_total = None
