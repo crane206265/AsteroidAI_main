@@ -454,6 +454,7 @@ class AstEnv():
         reward_map = res_params[1]
         best_action = res_params[2]
         sel_actions = res_params[3]
+        K = res_params[4]
 
         # ---------- Internal Parameter Processing ----------
         r_arr = self.ast.pos_sph_arr[:-1, :-1, 0]
@@ -517,7 +518,7 @@ class AstEnv():
         reward_map_img = ax6.imshow(reward_map.T, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)))
         ax6.scatter(40*sel_actions[:, 0], 20*sel_actions[:, 1], s=80, facecolors='none', edgecolors='r')
         ax6.scatter(40*best_action[0], 20*best_action[1], marker='*', color='r')
-        ax6.set_title("(Predicted) Reward Map + Selected Actions")
+        ax6.set_title("(Predicted) Reward Map + Selected Actions (K=%d)"%(K))
         plt.colorbar(reward_map_img, ax=ax6, shrink=0.75)
         self._setRewardMapPlot(ax=ax6, Etheta=Etheta, Stheta=Stheta)
         
@@ -814,13 +815,13 @@ class AgentRunner():
         ####################
 
         # pred_map : 20*40
-        K = 20
-        idxs = np.argsort(pred_map.reshape(-1))[::-1][:K]
+        self.K = 20
+        idxs = np.argsort(pred_map.reshape(-1))[::-1][:self.K]
         actions = np.stack([np.array([((idx%int(40))/40)%1, ((idx//int(40))/20)%1, 0.1, 0.1]) for idx in idxs], axis=0)
 
-        test_rewards = np.zeros((K))
+        test_rewards = np.zeros((self.K))
         ref_ast = self.env.ast.copy()
-        for i in range(K):
+        for i in range(self.K):
             _, reward, _, _ = self.env.step(actions[i, :], update=False)
             self.env.ast = ref_ast.copy()
             test_rewards[i] = reward + 0
@@ -857,6 +858,6 @@ class AgentRunner():
 
             reward_list.append(self.reward)
             if t%1 == 0:
-                self.env.show((reward_list, pred.T, best_action, actions), path=save_path, name='Env No.%02d t = %02d.png'%(env_i, t))
+                self.env.show((reward_list, pred.T, best_action, actions, self.K), path=save_path, name='Env No.%02d t = %02d.png'%(env_i, t))
                 
     
