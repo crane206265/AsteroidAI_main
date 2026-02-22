@@ -448,38 +448,107 @@ class AstEnv():
         lc_min = np.min(input_lc)
         return lc_max - lc_min
     
-    def show(self, reward, path, name="None"):
-        fig = plt.figure(figsize=(13, 5))
-        ax1 = fig.add_subplot(1, 2, 1)
-        ax2 = fig.add_subplot(1, 2, 2, projection='3d')
+    def show(self, res_params, path, name="None"):
+        # ---------- res_params : parameters to plot, calculated from running ----------
+        reward_list = res_params[0]
+        reward_map = res_params[1]
+        best_action = res_params[2]
+        sel_actions = res_params[3]
+
+        # ---------- Internal Parameter Processing ----------
+        r_arr = self.ast.pos_sph_arr[:-1, :-1, 0]
+
+        Sdir = self.lc_info[0:3]
+        Edir = self.lc_info[3:6]
+        Stheta = np.arccos(Sdir[-1]) * 20 / np.pi
+        Etheta = np.arccos(Edir[-1]) * 20 / np.pi
+
+        # ---------- Main Plotting Part ----------
+        fig = plt.figure(figsize=(14, 10), dpi=200)
+        ax1 = fig.add_subplot(2, 3, 1)                      # LC
+        ax2 = fig.add_subplot(2, 3, 2, projection='3d')     # Asteroid (View1)
+        ax3 = fig.add_subplot(2, 3, 3, projection='3d')     # Asteroid (View2)
+        ax4 = fig.add_subplot(2, 3, 4)                      # t-reward graph
+        ax5 = fig.add_subplot(2, 3, 5)                      # r_arr
+        ax6 = fig.add_subplot(2, 3, 6)                      # (predicted) reward_map + selected region
         
         lim_set = (-10, 10)
+        view1 = (30, -60)
+        view2 = (-30, 120)
 
         gridX = self.ast.pos_cart_arr[:, :, 0]
         gridY = self.ast.pos_cart_arr[:, :, 1]
         gridZ = self.ast.pos_cart_arr[:, :, 2]
 
+        # ax1 : Lightcurves
         ax1.plot(self.target_lc, color='coral', linestyle='solid', label='target') #black
         ax1.plot(self.lc_pred, color='coral', linestyle='dashed', label='pred.')
         ax1.plot(self.lc_pred0, color='gray', alpha=0.3, linestyle='dotted')
-        ax1.set_title("Lightcurve (Reward = %.2f)"%(reward))
+        ax1.set_title("Lightcurve (Reward = %.2f)"%(reward_list[-1]))
         ax1.legend()
         ax1.set_ylim([np.min(self.target_lc)-5, np.max(self.target_lc)+5])
 
-        ax2.set_box_aspect((1, 1, 1))
-        ax2.set_xlim(lim_set)
-        ax2.set_xlabel('X')
-        ax2.set_ylim(lim_set)
-        ax2.set_ylabel('Y')
-        ax2.set_zlim(lim_set)
-        ax2.set_zlabel('Z')
-        ax2.set_title("Predicted Model")
+        # ax2 : Asteroid Polyhedron (View1)
+        self._plotAsteroid(ax2, gridX, gridY, gridZ,
+                           elev=view1[0], azim=view1[1], lim_set=lim_set)
+        
+        # ax3 : Asteroid Polyhedron (View2)
+        self._plotAsteroid(ax3, gridX, gridY, gridZ,
+                           elev=view2[0], azim=view2[1], lim_set=lim_set)
 
-        ax2.plot_surface(gridX, gridY, gridZ)
+        # ax4 : t - reward Graph
+        t_last = reward_list.shape[-1]
+        ax4.plot(np.arange(t_last), reward_list, color='royalblue')
+        ax4.plot((0, t_last-1), (self.total_threshold, self.total_threshold), color='gray', alpha=0.3, linestyle='dotted')
+        ax4.set_title("t - reward Graph")
+        ax4.set_xlim((-1, max(15+1, t_last+1)))
+        ax4.set_xlabel('t')
+        ax4.set_ylabel('reward')
+
+        # ax5 : r_arr
+        r_arr_img = ax5.imshow(r_arr, vmax=8, vmin=12)
+        ax5.set_title("r_arr")
+        plt.colorbar(r_arr_img, ax=ax5, shrink=0.75)
+        ax5.plot([0, 39], [Stheta, Stheta], color='orangered', label='Sun Direction', linewidth=2, linestyle='dashed')
+        ax5.plot([0, 39], [Etheta, Etheta], color='royalblue', label='Earth Direction', linewidth=2, linestyle='dashed')
+        ax5.legend()
+
+        # ax6 : (Predicted) Reward Map + Selected Actions
+        reward_map_img = ax6.imshow(reward_map, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)))
+        ax6.scatter(sel_actions[:, 0], sel_actions[:, 1], s=80, facecolors='none', edgecolors='r')
+        ax6.scatter(best_action[0], best_action[1], marker='*', color='r')
+        ax6.set_title("(Predicted) Reward Map + Selected Actions")
+        plt.colorbar(reward_map_img, ax=ax6, shrink=0.75)
+        self._setRewardMapPlot(ax=ax6, Etheta=Etheta, Stheta=Stheta)
         
         plt.savefig(path+name)
         #plt.show()
         plt.close()
+
+    def _plotAsteroid(self, ax:plt.Axes, gridX, gridY, gridZ, elev=30, azim=-60, lim_set=(-10, 10)):
+        ax.plot_surface(gridX, gridY, gridZ)
+        ax.set_title("Predicted Model (Elev.=%ddeg, Azim.=%ddeg)"%(elev, azim))
+        ax.view_init(elev=elev, azim=azim)
+        ax.set_box_aspect((1, 1, 1))
+        ax.set_xlim(lim_set)
+        ax.set_xlabel('X')
+        ax.set_ylim(lim_set)
+        ax.set_ylabel('Y')
+        ax.set_zlim(lim_set)
+        ax.set_zlabel('Z')
+
+    def _setRewardMapPlot(self, ax:plt.Axes, Etheta, Stheta):
+        """
+        Draw optional informations for reward_map type plotting to ax
+        """
+        ax.plot([ 0, 40], [Etheta, Etheta], color='royalblue', label='Earth Direction', linewidth=2, linestyle='dashed')
+        ax.plot([ 0, 40], [Stheta, Stheta], color='orangered', label='Sun Direction', linewidth=2, linestyle='dashed')
+        ax.plot([ 0, 40], [ 0,  0], color='gold', linewidth=0.8, linestyle='dotted')
+        ax.plot([ 0, 40], [20, 20], color='gold', linewidth=0.8, linestyle='dotted')
+        ax.plot([ 0,  0], [ 0, 20], color='gold', linewidth=0.8, linestyle='dotted')
+        ax.plot([40, 40], [ 0, 20], color='gold', linewidth=0.8, linestyle='dotted')
+        ax.set_xlim([0-0.5, 40-0.5])
+        ax.set_ylim([20-0.5, 0-0.5])
 
 # Updated for preserving spatial structure with 1x1 conv
 class QValueNet_CNN_B1(nn.Module):
@@ -756,14 +825,15 @@ class AgentRunner():
             self.env.ast = ref_ast.copy()
             test_rewards[i] = reward + 0
         
-        if np.max(test_rewards) < self.reward: return None
-        return actions[np.argmax(test_rewards), :]
+        if np.max(test_rewards) < self.reward: return None, actions
+        return actions[np.argmax(test_rewards), :], actions
         
     def run(self, env_i, save_path):
         ref_ast = self.env.ast.copy()
         self.env.ast = ref_ast.copy()
 
         self.reset(self.passed)
+        reward_list = []
         for t in tqdm(range(MAX_STEPS)):
             if self.done:
                 if self.passed:
@@ -779,13 +849,14 @@ class AgentRunner():
                 rewards = self.model(input)
                 pred = rewards.cpu().numpy().reshape(40, 20).T
 
-            action = self.action_selector(pred)
-            if action is None:
+            best_action, actions = self.action_selector(pred)
+            if best_action is None:
                 print("No Improving Action Detected")
                 break
-            self.state, self.reward, self.done, self.passed = self.env.step(action)
+            self.state, self.reward, self.done, self.passed = self.env.step(best_action)
 
+            reward_list.append(self.reward)
             if t%1 == 0:
-                self.env.show(self.reward, path=save_path, name='Env No.%02d t = %02d.png'%(env_i, t))
+                self.env.show((reward_list, pred.T, best_action, actions), path=save_path, name='Env No.%02d t = %02d.png'%(env_i, t))
                 
     
