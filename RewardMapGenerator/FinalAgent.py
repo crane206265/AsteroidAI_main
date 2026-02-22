@@ -497,7 +497,7 @@ class AstEnv():
                            elev=view2[0], azim=view2[1], lim_set=lim_set)
 
         # ax4 : t - reward Graph
-        t_last = reward_list.shape[-1]
+        t_last = len(reward_list)
         ax4.plot(np.arange(t_last), reward_list, color='royalblue')
         ax4.plot((0, t_last-1), (self.total_threshold, self.total_threshold), color='gray', alpha=0.3, linestyle='dotted')
         ax4.set_title("t - reward Graph")
