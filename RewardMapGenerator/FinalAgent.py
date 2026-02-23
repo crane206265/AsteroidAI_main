@@ -465,7 +465,7 @@ class AstEnv():
         Etheta = np.arccos(Edir[-1]) * 20 / np.pi
 
         # ---------- Main Plotting Part ----------
-        fig = plt.figure(figsize=(14, 10), dpi=200)
+        fig = plt.figure(figsize=(15, 10), dpi=150)
         ax1 = fig.add_subplot(2, 3, 1)                      # LC
         ax2 = fig.add_subplot(2, 3, 2, projection='3d')     # Asteroid (View1)
         ax3 = fig.add_subplot(2, 3, 3, projection='3d')     # Asteroid (View2)
@@ -509,7 +509,7 @@ class AstEnv():
         # ax5 : r_arr
         r_arr_img = ax5.imshow(r_arr.T, vmax=8, vmin=12)
         ax5.set_title("r_arr")
-        plt.colorbar(r_arr_img, ax=ax5, shrink=0.75)
+        plt.colorbar(r_arr_img, ax=ax5, shrink=0.5)
         ax5.plot([0, 39], [Stheta, Stheta], color='orangered', label='Sun Direction', linewidth=2, linestyle='dashed')
         ax5.plot([0, 39], [Etheta, Etheta], color='royalblue', label='Earth Direction', linewidth=2, linestyle='dashed')
         ax5.legend()
@@ -519,7 +519,7 @@ class AstEnv():
         ax6.scatter(40*sel_actions[:, 0], 20*sel_actions[:, 1], s=80, facecolors='none', edgecolors='r')
         ax6.scatter(40*best_action[0], 20*best_action[1], marker='*', color='r')
         ax6.set_title("(Predicted) Reward Map + Selected Actions (K=%d)"%(K))
-        plt.colorbar(reward_map_img, ax=ax6, shrink=0.75)
+        plt.colorbar(reward_map_img, ax=ax6, shrink=0.5)
         self._setRewardMapPlot(ax=ax6, Etheta=Etheta, Stheta=Stheta)
         
         plt.savefig(path+name)
@@ -859,5 +859,6 @@ class AgentRunner():
             reward_list.append(self.reward)
             if t%1 == 0:
                 self.env.show((reward_list, pred.T, best_action, actions, self.K), path=save_path, name='Env No.%02d t = %02d.png'%(env_i, t))
-                
+
+        print("Reward Change : %.4f -> %.4f"%(reward_list[0], reward_list[-1]))       
     

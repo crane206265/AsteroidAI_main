@@ -66,6 +66,14 @@ def run_one(local_i, save_path):
     target_lc = x[:-9]
     lc_info = x[-9:]
 
+    # FT Filter
+    fft_coef_zip = np.abs(np.fft.fft(target_lc))[:target_lc.shape[0]//2+1]
+    fft_coef_zip = np.log10(fft_coef_zip)
+    log_thr = np.log10(4)#4
+    if not np.all(fft_coef_zip[2] - log_thr >= fft_coef_zip[3:]):
+        print("Filtered by FT Filter")
+        return
+
     # Build environment
     env = AstEnv(
         target_lc=target_lc,
@@ -89,7 +97,7 @@ def run_one(local_i, save_path):
 def main():
     # ---- Range of global indices to compute ----
     start_idx = 800#1300       # inclusive
-    final_idx = 900#1500     # exclusive (global index)
+    final_idx = 1000#1500     # exclusive (global index)
     num_samples = final_idx - start_idx
 
     init(DATA_PATH, start_idx, final_idx, reward_domain, N_set, lightcurve_unit_len, hidden_dim)
