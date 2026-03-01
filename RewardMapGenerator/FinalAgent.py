@@ -517,7 +517,7 @@ class AstEnv():
         # ax6 : (Predicted) Reward Map + Selected Actions
         reward_map_img = ax6.imshow(reward_map.T, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)))
         ax6.scatter(40*sel_actions[:, 0], 20*sel_actions[:, 1], s=80, facecolors='none', edgecolors='r')
-        ax6.scatter(40*best_action[0], 20*best_action[1], marker='*', color='r')
+        ax6.scatter(40*best_action[0], 20*best_action[1], marker='*', color='gold')
         ax6.set_title("(Predicted) Reward Map + Selected Actions (K=%d)"%(K))
         plt.colorbar(reward_map_img, ax=ax6, shrink=0.5)
         self._setRewardMapPlot(ax=ax6, Etheta=Etheta, Stheta=Stheta)
@@ -816,29 +816,36 @@ class AgentRunner():
 
         # pred_map : 20*40
         self.K = 20
-        idxs = np.argsort(pred_map.reshape(-1))[::-1][:self.K]
-        actions = np.stack([np.array([((idx%int(40))/40)%1, ((idx//int(40))/20)%1, 0.1, 0.1]) for idx in idxs], axis=0)
+        for it in range(2):
+            idxs = np.argsort(pred_map.reshape(-1))[::-1][self.K*it:self.K*(it+1)]
+            actions = np.stack([np.array([((idx%int(40))/40)%1, ((idx//int(40))/20)%1, 0.1, 0.1]) for idx in idxs], axis=0)
 
-        test_rewards = np.zeros((self.K))
-        ref_ast = self.env.ast.copy()
-        for i in range(self.K):
-            _, reward, _, _ = self.env.step(actions[i, :], update=False)
-            self.env.ast = ref_ast.copy()
-            test_rewards[i] = reward + 0
+            test_rewards = np.zeros((self.K))
+            ref_ast = self.env.ast.copy()
+            for i in range(self.K):
+                _, reward, _, _ = self.env.step(actions[i, :], update=False)
+                self.env.ast = ref_ast.copy()
+                test_rewards[i] = reward + 0
         
-        if np.max(test_rewards) < self.reward: return None, actions
+            if np.max(test_rewards) > self.reward:
+                break
+        if it >= 2: return None, actions
+
         return actions[np.argmax(test_rewards), :], actions
         
     def run(self, env_i, save_path):
         ref_ast = self.env.ast.copy()
         self.env.ast = ref_ast.copy()
 
+        msg1 = ""
+        msg2 = ""
+
         self.reset(self.passed)
         reward_list = []
         for t in tqdm(range(MAX_STEPS)):
             if self.done:
                 if self.passed:
-                    print("PASSED")
+                    msg1 = "PASSED"
                     break
                 #else: print("Did not converged to valid solution.")
                 
@@ -852,7 +859,7 @@ class AgentRunner():
 
             best_action, actions = self.action_selector(pred)
             if best_action is None:
-                print("No Improving Action Detected")
+                msg1 = "No Improving Action Detected"
                 break
             self.state, self.reward, self.done, self.passed = self.env.step(best_action)
 
@@ -860,5 +867,10 @@ class AgentRunner():
             if t%1 == 0:
                 self.env.show((reward_list, pred.T, best_action, actions, self.K), path=save_path, name='Env No.%02d t = %02d.png'%(env_i, t))
 
-        print("Reward Change : %.4f -> %.4f"%(reward_list[0], reward_list[-1]))       
+        if len(reward_list) != 0:
+            msg2 ="Reward Change : %.4f -> %.4f"%(reward_list[0], reward_list[-1]) 
+        
+        print(msg1)
+        print(msg2)
+        return msg1 + " | " + msg2       
     

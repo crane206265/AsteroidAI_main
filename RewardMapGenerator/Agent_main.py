@@ -71,8 +71,9 @@ def run_one(local_i, save_path):
     fft_coef_zip = np.log10(fft_coef_zip)
     log_thr = np.log10(4)#4
     if not np.all(fft_coef_zip[2] - log_thr >= fft_coef_zip[3:]):
-        print("Filtered by FT Filter")
-        return
+        msg = "Filtered by FT Filter"
+        print(msg)
+        return msg
 
     # Build environment
     env = AstEnv(
@@ -86,25 +87,29 @@ def run_one(local_i, save_path):
 
     # If ellipsoid initialization fails, return flag
     if env.ell_err:
-        print("Ellipsoid Initialization Fails (reward0 = %.3f)"%(env.reward0))
-        return None, True, env.reward0, global_i
+        msg = "Ellipsoid Initialization Fails (reward0 = %.3f)"%(env.reward0)
+        print(msg)
+        return msg
 
     runner = AgentRunner(env, model)
-    runner.run(global_i, save_path)
+    msg = runner.run(global_i, save_path)
 
-    return 
+    return msg
 
 def main():
     # ---- Range of global indices to compute ----
-    start_idx = 800#1300       # inclusive
-    final_idx = 1000#1500     # exclusive (global index)
+    start_idx = 730#1300       # inclusive
+    final_idx = 800#1500     # exclusive (global index)
     num_samples = final_idx - start_idx
 
     init(DATA_PATH, start_idx, final_idx, reward_domain, N_set, lightcurve_unit_len, hidden_dim)
+    
 
     for i in range(num_samples):
         print("\n---------- Current idx : "+str(i+start_idx)+" ----------")
-        run_one(i, SAVE_PATH)
+        msg = run_one(i, SAVE_PATH)
+        with open("AgentRecords.txt", "a", encoding="utf-8") as f:
+            f.write("Current idx : "+str(i+start_idx)+" ||  "+msg+"\n")
     
 
 if __name__ == "__main__":
