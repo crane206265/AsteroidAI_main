@@ -471,7 +471,7 @@ class AstEnv():
         plt.savefig(path+name)
         #plt.show()
 
-class Runner():
+class GenRunner():
     def __init__(self, env:AstEnv, state_dim, action_dim, prec = 5.0):
         self.env = env
         self.done = True
