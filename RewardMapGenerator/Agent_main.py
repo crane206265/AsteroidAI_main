@@ -18,7 +18,7 @@ MODEL_PATH = "C:/Users/dlgkr/Downloads/train0208_1/40model.pt"
 
 N_set = (40, 20)
 lightcurve_unit_len = 100
-reward_domain = [-200, 65]
+reward_domain = [-300, 60]
 
 # Global Variables for each Worker Processors
 X_total = None
@@ -69,7 +69,7 @@ def run_one(local_i, save_path):
     # FT Filter
     fft_coef_zip = np.abs(np.fft.fft(target_lc))[:target_lc.shape[0]//2+1]
     fft_coef_zip = np.log10(fft_coef_zip)
-    log_thr = np.log10(4)#4
+    log_thr = np.log10(2)#4
     if not np.all(fft_coef_zip[2] - log_thr >= fft_coef_zip[3:]):
         msg = "Filtered by FT Filter"
         print(msg)
@@ -98,8 +98,8 @@ def run_one(local_i, save_path):
 
 def main():
     # ---- Range of global indices to compute ----
-    start_idx = 730#1300       # inclusive
-    final_idx = 800#1500     # exclusive (global index)
+    start_idx = 740#740#1300       # inclusive
+    final_idx = 1200#1500     # exclusive (global index)
     num_samples = final_idx - start_idx
 
     init(DATA_PATH, start_idx, final_idx, reward_domain, N_set, lightcurve_unit_len, hidden_dim)

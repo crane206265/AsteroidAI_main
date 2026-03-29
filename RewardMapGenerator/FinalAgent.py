@@ -14,7 +14,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 PI = 3.1415926535
-MAX_STEPS = 3000 #per episode
+MAX_STEPS = 500 #per episode
 
 # seed
 seed = 206265
@@ -526,9 +526,111 @@ class AstEnv():
         #plt.show()
         plt.close()
 
+    def show(self, res_params, path, name="None"):
+        # ---------- res_params : parameters to plot, calculated from running ----------
+        reward_list = res_params[0]
+        reward_map = res_params[1]
+        best_action = res_params[2]
+        sel_actions = res_params[3]
+        K = res_params[4]
+
+        # ---------- Internal Parameter Processing ----------
+        r_arr = self.ast.pos_sph_arr[:-1, :-1, 0]
+
+        Sdir = self.lc_info[0:3]
+        Edir = self.lc_info[3:6]
+        Stheta = np.arccos(Sdir[-1]) * 20 / np.pi
+        Etheta = np.arccos(Edir[-1]) * 20 / np.pi
+
+        # ---------- Main Plotting Part ----------
+        fig = plt.figure(figsize=(27, 7), dpi=150)
+        # Font
+        plt.rcParams['font.size']=18
+        plt.rcParams['font.family']='sans-serif'
+        plt.rcParams['text.usetex']=False 
+        # Axis setting
+        plt.rcParams['axes.linewidth']=1.5
+        plt.rcParams['xtick.direction']='in'
+        plt.rcParams['ytick.direction']='in'
+        plt.rcParams['xtick.minor.visible']=True
+        plt.rcParams['xtick.major.size']=7
+        plt.rcParams['ytick.major.size']=7
+        plt.rcParams['xtick.minor.size']=3.5
+        plt.rcParams['ytick.minor.size']=3.5
+        plt.rcParams['xtick.major.width']=1
+        plt.rcParams['ytick.major.width']=1
+        plt.rcParams['xtick.minor.width']=1
+        plt.rcParams['ytick.minor.width']=1
+        plt.rcParams['ytick.right']=True
+        plt.rcParams['xtick.top']=True
+        ax1 = fig.add_subplot(1, 3, 1)                      # LC
+        ax2 = fig.add_subplot(1, 3, 2, projection='3d')     # Asteroid (View1)
+        #ax3 = fig.add_subplot(1, 3, 3, projection='3d')     # Asteroid (View2)
+        ax3 = fig.add_subplot(1, 3, 3)                      # t-reward graph
+        
+        fig.subplots_adjust(top=0.9)
+        
+        lim_set = (-10, 10)
+        view1 = (30, -60)
+        view1 = (30, 300)
+        view2 = (-30, 120)
+
+        gridX = self.ast.pos_cart_arr[:, :, 0]
+        gridY = self.ast.pos_cart_arr[:, :, 1]
+        gridZ = self.ast.pos_cart_arr[:, :, 2]
+
+        # ax1 : Lightcurves
+        ax1.plot(self.target_lc, color='coral', linestyle='solid', label='target') #black
+        ax1.plot(self.lc_pred, color='coral', linestyle='dashed', label='pred.')
+        ax1.plot(self.lc_pred0, color='gray', alpha=0.3, linestyle='dotted')
+        ax1.set_title("Lightcurve (State = %.2f)"%(self.reward(init=100.0, relative=True)), pad=15)
+        ax1.legend()
+        ax1.set_ylim([np.min(self.target_lc)-5, np.max(self.target_lc)+5])
+        ax1.set_xlabel("t")
+        ax1.set_ylabel("flux")
+
+        # ax2 : Asteroid Polyhedron (View1)
+        self._plotAsteroid(ax2, gridX, gridY, gridZ,
+                           elev=view1[0], azim=view1[1], lim_set=lim_set)
+        
+        # ax3 : Asteroid Polyhedron (View2)
+        #self._plotAsteroid(ax3, gridX, gridY, gridZ,
+        #                   elev=view2[0], azim=view2[1], lim_set=lim_set)
+
+        # ax4 : t - reward Graph
+        t_last = len(reward_list)
+        ax3.plot(np.arange(t_last), reward_list, color='royalblue')
+        #ax3.plot((0, t_last-1), (self.total_threshold, self.total_threshold), color='gray', alpha=0.3, linestyle='dotted')
+        ax3.set_title("t - Loss Graph")
+        ax3.set_xlim((-1, max(15+1, t_last+1)))
+        ax3.set_xlabel('t')
+        ax3.set_ylabel('LC Reconstruction Loss')
+
+        plt.savefig(path+name)
+        #plt.show()
+        plt.close()
+
     def _plotAsteroid(self, ax:plt.Axes, gridX, gridY, gridZ, elev=30, azim=-60, lim_set=(-10, 10)):
-        ax.plot_surface(gridX, gridY, gridZ)
-        ax.set_title("Asteroid (Elev.=%ddeg, Azim.=%ddeg)"%(elev, azim))
+        #ax.plot_surface(gridX, gridY, gridZ)
+
+        ########## Advance Plotting Options ##########
+        ax.plot_surface(
+            gridX, gridY, gridZ,
+            cmap='cividis',
+            edgecolor='k',
+            linewidth=0.3,
+            alpha=0.95
+        )#"""
+        
+        ax.plot_wireframe(
+            gridX, gridY, gridZ,
+            color='black',
+            linewidth=0.2,
+            alpha=0.2
+        )
+
+        ax.set_title("Modeled Asteroid")
+        ax.set_title("Modeled Asteroid", pad=15) #30 w/ grid
         ax.view_init(elev=elev, azim=azim)
         ax.set_box_aspect((1, 1, 1))
         ax.set_xlim(lim_set)
@@ -537,6 +639,20 @@ class AstEnv():
         ax.set_ylabel('Y')
         ax.set_zlim(lim_set)
         ax.set_zlabel('Z')
+
+        ticksx = np.arange(-10, 11, 20)
+        ticksyz = np.arange(-10, 11, 5)
+        ax.set_xticks(ticksx)
+        ax.set_yticks(ticksyz)
+        ax.set_zticks(ticksyz)
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        ax.set_zticklabels([])
+        for axis in [ax.xaxis, ax.yaxis, ax.zaxis]:
+            axis._axinfo["grid"]['color'] = (0.4, 0.4, 0.4, 0.18)
+            axis._axinfo["grid"]['linewidth'] = 0.7
+        
+        #ax.set_axis_off()
 
     def _setRewardMapPlot(self, ax:plt.Axes, Etheta, Stheta):
         """
@@ -863,7 +979,13 @@ class AgentRunner():
                 break
             self.state, self.reward, self.done, self.passed = self.env.step(best_action)
 
-            reward_list.append(self.reward)
+            amp_lc_target = self.env.target_lc - np.mean(self.env.target_lc)
+            amp_lc_target = amp_lc_target / np.max(np.abs(amp_lc_target))
+            amp_lc_pred = self.env.lc_pred - np.mean(self.env.lc_pred)
+            amp_lc_pred = amp_lc_pred / np.max(np.abs(amp_lc_pred))
+            recon_loss = np.mean((amp_lc_pred - amp_lc_target)**2)
+            #reward_list.append(self.reward)
+            reward_list.append(recon_loss) # updated for recon_loss plotting
             if t%1 == 0:
                 self.env.show((reward_list, pred.T, best_action, actions, self.K), path=save_path, name='Env No.%02d t = %02d.png'%(env_i, t))
 
