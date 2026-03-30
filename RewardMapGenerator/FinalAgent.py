@@ -545,7 +545,7 @@ class AstEnv():
         # ---------- Main Plotting Part ----------
         fig = plt.figure(figsize=(27, 7), dpi=150)
         # Font
-        plt.rcParams['font.size']=18
+        plt.rcParams['font.size']=20
         plt.rcParams['font.family']='sans-serif'
         plt.rcParams['text.usetex']=False 
         # Axis setting
@@ -572,7 +572,7 @@ class AstEnv():
         
         lim_set = (-10, 10)
         view1 = (30, -60)
-        view1 = (30, 300)
+        view1 = (30, 250)
         view2 = (-30, 120)
 
         gridX = self.ast.pos_cart_arr[:, :, 0]
@@ -580,9 +580,9 @@ class AstEnv():
         gridZ = self.ast.pos_cart_arr[:, :, 2]
 
         # ax1 : Lightcurves
-        ax1.plot(self.target_lc, color='coral', linestyle='solid', label='target') #black
-        ax1.plot(self.lc_pred, color='coral', linestyle='dashed', label='pred.')
-        ax1.plot(self.lc_pred0, color='gray', alpha=0.3, linestyle='dotted')
+        ax1.plot(self.target_lc, color='coral', linestyle='solid', lw=2.5, label='target') #black
+        ax1.plot(self.lc_pred, color='coral', linestyle='dashed', lw=2.5, label='modeled')
+        ax1.plot(self.lc_pred0, color='gray', alpha=0.8, lw=2.5, linestyle='dotted', label='init.')
         ax1.set_title("Lightcurve (State = %.2f)"%(self.reward(init=100.0, relative=True)), pad=15)
         ax1.legend()
         ax1.set_ylim([np.min(self.target_lc)-5, np.max(self.target_lc)+5])
@@ -605,6 +605,21 @@ class AstEnv():
         ax3.set_xlim((-1, max(15+1, t_last+1)))
         ax3.set_xlabel('t')
         ax3.set_ylabel('LC Reconstruction Loss')
+
+        # ax6 : (Predicted) Reward Map + Selected Actions
+        """
+        reward_map_img = ax3.imshow(reward_map.T, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)))
+        ax3.scatter(40*sel_actions[:, 0], 20*sel_actions[:, 1], s=80, facecolors='none', edgecolors='r')
+        ax3.scatter(40*best_action[0], 20*best_action[1], marker='*', color='gold')
+        ax3.set_title("(Predicted) Reward Map + Selected Actions (K=%d)"%(K), pad=20)
+        plt.colorbar(reward_map_img, ax=ax3, shrink=0.5)
+        ax3.set_xlim([0-0.5, 40-0.5])
+        ax3.set_ylim([20-0.5, 0-0.5])
+        ax3.set_xlabel(r"lon.($\phi$)")
+        ax3.set_ylabel(r"lat.($\theta$)")
+        ax3.set_xticks(np.arange(0, 40, 10))
+        ax3.set_yticks(np.arange(0, 20, 5))
+        """
 
         plt.savefig(path+name)
         #plt.show()

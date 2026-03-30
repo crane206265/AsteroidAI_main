@@ -104,8 +104,8 @@ def main():
 
     init(DATA_PATH, start_idx, final_idx, reward_domain, N_set, lightcurve_unit_len, hidden_dim)
     
-
-    for i in range(num_samples):
+    #for i in range(num_samples):
+    for i in [x-start_idx for x in [806, 812, 924]]:
         print("\n---------- Current idx : "+str(i+start_idx)+" ----------")
         msg = run_one(i, SAVE_PATH)
         with open("AgentRecords.txt", "a", encoding="utf-8") as f:
