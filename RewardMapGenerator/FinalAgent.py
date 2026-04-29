@@ -448,7 +448,7 @@ class AstEnv():
         lc_min = np.min(input_lc)
         return lc_max - lc_min
     
-    def show(self, res_params, path, name="None"):
+    def show(self, res_params, path, name="None", reward_mode="reward"):
         # ---------- res_params : parameters to plot, calculated from running ----------
         reward_list = res_params[0]
         reward_map = res_params[1]
@@ -498,13 +498,22 @@ class AstEnv():
                            elev=view2[0], azim=view2[1], lim_set=lim_set)
 
         # ax4 : t - reward Graph
-        t_last = len(reward_list)
-        ax4.plot(np.arange(t_last), reward_list, color='royalblue')
-        ax4.plot((0, t_last-1), (self.total_threshold, self.total_threshold), color='gray', alpha=0.3, linestyle='dotted')
-        ax4.set_title("t - reward Graph")
-        ax4.set_xlim((-1, max(15+1, t_last+1)))
-        ax4.set_xlabel('t')
-        ax4.set_ylabel('reward')
+        if reward_mode == "reward":
+            t_last = len(reward_list)
+            ax4.plot(np.arange(t_last), reward_list, color='royalblue')
+            ax4.plot((0, t_last-1), (self.total_threshold, self.total_threshold), color='gray', alpha=0.3, linestyle='dotted')
+            ax4.set_title("t - reward Graph")
+            ax4.set_xlim((-1, max(15+1, t_last+1)))
+            ax4.set_xlabel('t')
+            ax4.set_ylabel('reward')
+        elif reward_mode == "recon":
+            t_last = len(reward_list)
+            ax4.plot(np.arange(t_last), reward_list, color='royalblue')
+            #ax4.plot((0, t_last-1), (self.total_threshold, self.total_threshold), color='gray', alpha=0.3, linestyle='dotted')
+            ax4.set_title("t - Loss Graph")
+            ax4.set_xlim((-1, max(15+1, t_last+1)))
+            ax4.set_xlabel('t')
+            ax4.set_ylabel('LC Reconstruction Loss')
 
         # ax5 : r_arr
         r_arr_img = ax5.imshow(r_arr.T, vmax=8, vmin=12)
@@ -526,6 +535,7 @@ class AstEnv():
         #plt.show()
         plt.close()
 
+    '''
     def show(self, res_params, path, name="None"):
         # ---------- res_params : parameters to plot, calculated from running ----------
         reward_list = res_params[0]
@@ -621,6 +631,90 @@ class AstEnv():
         ax3.set_yticks(np.arange(0, 20, 5))
         """
 
+        plt.savefig(path+name)
+        #plt.show()
+        plt.close()
+    '''
+
+    def multishow(self, res_params, path, name="None"):
+        ####################### 260412 ##################
+        # 아직 안함!!!1
+        ################################################
+        raise NotImplementedError
+        # only use for multi LC
+        # ---------- res_params : parameters to plot, calculated from running ----------
+        reward_lists = res_params[0] # [N_LC, list len]
+        reward_maps = res_params[1] # [N_LC, mapsize]
+        best_action = res_params[2]
+        sel_actions = res_params[3]
+        K = res_params[4]
+
+        # ---------- Internal Parameter Processing ----------
+        r_arr = self.ast.pos_sph_arr[:-1, :-1, 0]
+
+        Sdir = self.lc_info[0:3]
+        Edir = self.lc_info[3:6]
+        Stheta = np.arccos(Sdir[-1]) * 20 / np.pi
+        Etheta = np.arccos(Edir[-1]) * 20 / np.pi
+
+        # ---------- Main Plotting Part ----------
+        fig = plt.figure(figsize=(15, 10), dpi=150)
+        ax1 = fig.add_subplot(2, 3, 1)                      # LC
+        ax2 = fig.add_subplot(2, 3, 2, projection='3d')     # Asteroid (View1)
+        ax3 = fig.add_subplot(2, 3, 3, projection='3d')     # Asteroid (View2)
+        ax4 = fig.add_subplot(2, 3, 4)                      # t-reward graph
+        ax5 = fig.add_subplot(2, 3, 5)                      # r_arr
+        ax6 = fig.add_subplot(2, 3, 6)                      # (predicted) reward_map + selected region
+        
+        lim_set = (-10, 10)
+        view1 = (30, -60)
+        view2 = (-30, 120)
+
+        gridX = self.ast.pos_cart_arr[:, :, 0]
+        gridY = self.ast.pos_cart_arr[:, :, 1]
+        gridZ = self.ast.pos_cart_arr[:, :, 2]
+
+        # ax1 : Lightcurves
+        ax1.plot(self.target_lc, color='coral', linestyle='solid', label='target') #black
+        ax1.plot(self.lc_pred, color='coral', linestyle='dashed', label='pred.')
+        ax1.plot(self.lc_pred0, color='gray', alpha=0.3, linestyle='dotted')
+        ax1.set_title("Lightcurve (Reward = %.2f)"%(reward_list[-1]))
+        ax1.legend()
+        ax1.set_ylim([np.min(self.target_lc)-5, np.max(self.target_lc)+5])
+
+        # ax2 : Asteroid Polyhedron (View1)
+        self._plotAsteroid(ax2, gridX, gridY, gridZ,
+                           elev=view1[0], azim=view1[1], lim_set=lim_set)
+        
+        # ax3 : Asteroid Polyhedron (View2)
+        self._plotAsteroid(ax3, gridX, gridY, gridZ,
+                           elev=view2[0], azim=view2[1], lim_set=lim_set)
+
+        # ax4 : t - reward Graph
+        t_last = len(reward_list)
+        ax4.plot(np.arange(t_last), reward_list, color='royalblue')
+        ax4.plot((0, t_last-1), (self.total_threshold, self.total_threshold), color='gray', alpha=0.3, linestyle='dotted')
+        ax4.set_title("t - reward Graph")
+        ax4.set_xlim((-1, max(15+1, t_last+1)))
+        ax4.set_xlabel('t')
+        ax4.set_ylabel('reward')
+
+        # ax5 : r_arr
+        r_arr_img = ax5.imshow(r_arr.T, vmax=8, vmin=12)
+        ax5.set_title("r_arr")
+        plt.colorbar(r_arr_img, ax=ax5, shrink=0.5)
+        ax5.plot([0, 39], [Stheta, Stheta], color='orangered', label='Sun Direction', linewidth=2, linestyle='dashed')
+        ax5.plot([0, 39], [Etheta, Etheta], color='royalblue', label='Earth Direction', linewidth=2, linestyle='dashed')
+        ax5.legend()
+
+        # ax6 : (Predicted) Reward Map + Selected Actions
+        reward_map_img = ax6.imshow(reward_map.T, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)))
+        ax6.scatter(40*sel_actions[:, 0], 20*sel_actions[:, 1], s=80, facecolors='none', edgecolors='r')
+        ax6.scatter(40*best_action[0], 20*best_action[1], marker='*', color='gold')
+        ax6.set_title("(Predicted) Reward Map + Selected Actions (K=%d)"%(K))
+        plt.colorbar(reward_map_img, ax=ax6, shrink=0.5)
+        self._setRewardMapPlot(ax=ax6, Etheta=Etheta, Stheta=Stheta)
+        
         plt.savefig(path+name)
         #plt.show()
         plt.close()
@@ -965,8 +1059,9 @@ class AgentRunner():
         return actions[np.argmax(test_rewards), :], actions
         
     def run(self, env_i, save_path):
-        ref_ast = self.env.ast.copy()
-        self.env.ast = ref_ast.copy()
+        # removed logic at 260412
+        #ref_ast = self.env.ast.copy()
+        #self.env.ast = ref_ast.copy()
 
         msg1 = ""
         msg2 = ""
@@ -1010,4 +1105,145 @@ class AgentRunner():
         print(msg1)
         print(msg2)
         return msg1 + " | " + msg2       
-    
+
+# for multiple LC   
+class MultiAgentRunner():
+    def __init__(self, envs:list[AstEnv], model:QValueNet_CNN_B1):
+        self.envs = envs
+        self.N_LC = len(envs)
+        self.done = [True]*self.N_LC
+        self.passed = [False]*self.N_LC
+
+        self.model = model
+
+    def reset(self, passed):
+        self.states = [env.reset(passed) for env in self.envs]
+        self.rewards = [env.reward0 for env in self.envs]
+        self.done = [False]*self.N_LC
+        self.passed = [False]*self.N_LC
+
+    def input_data(self, state):
+        # GPU 최적화 필요 !!!!!!!!!!!!!!
+        input_list = []
+        for idx in range(800):
+            i = idx//int(20)
+            j = idx%int(20)
+            phi_action = (i/40)%1
+            theta_action = (j/20)%1
+            actions = np.array([phi_action, theta_action, 0.1, 0.1])
+            input = torch.tensor(np.concatenate((state, actions))).float().to(device)
+            input_list.append(torch.unsqueeze(input, 0))
+        total_input = torch.concat(input_list, dim=0)
+        return total_input
+
+    def action_selector(self, pred_maps):
+        pred_maps = np.stack(pred_maps, axis=0)
+        """
+        pred_maps : np.ndarray, shape = (N_lc, 20, 40)
+            predicted reward map for each LC / Env
+
+        Assumption:
+        - self.envs is a list of Env objects, one per LC
+        - all envs represent the same asteroid and should therefore be rolled back together
+        - self.reward is current aggregated score; for maximin, current score should be
+          the current min reward across envs
+        """
+        self.K = 20
+        N_lc = pred_maps.shape[0]
+
+        ##################### 260412 #####################3
+        # current_score : should be designed 
+        current_score = np.min(self.rewards)
+
+        # predicted maximin map
+        pred_min = np.min(pred_maps, axis=0)
+        pred_mean = np.mean(pred_maps, axis=0)
+        w1 = 0.1
+        w2 = 0.9
+        pred_score = (w1*pred_min + w2*pred_mean) / (w1+w2)
+        for it in range(2):
+            idxs = np.argsort(pred_score.reshape(-1))[::-1][self.K * it : self.K * (it + 1)]
+            actions = np.stack([np.array([((idx%int(40))/40)%1, ((idx//int(40))/20)%1, 0.1, 0.1]) for idx in idxs], axis=0)
+
+            test_rewards = np.full(self.K, -np.inf)
+            ref_asts = [env.ast.copy() for env in self.envs] # backup all env asteroids
+            for i in range(self.K):
+                rewards_each = np.zeros(N_lc)
+
+                for k, env in enumerate(self.envs):
+                    _, reward_k, _, _ = env.step(actions[i, :], update=False)
+                    rewards_each[k] = reward_k
+
+                # maximin + avg score
+                test_rewards[i] = (w1*rewards_each.min() + w2*rewards_each.mean()) / (w1+w2)
+
+                # rollback all envs to the same reference state
+                for k, env in enumerate(self.envs):
+                    env.ast = ref_asts[k].copy()
+
+            if np.max(test_rewards) > current_score:
+                break
+
+        if it >= 1 and np.max(test_rewards) <= current_score:
+            print("max(test_rewards)(%.3f) <= current score(%.3f)"%(np.max(test_rewards), current_score))
+            return None, actions
+
+        return actions[np.argmax(test_rewards), :], actions
+
+    def run(self, env_i, save_path):
+        # env_i : parameter for just termial printing
+        #ref_ast = self.env.ast.copy()
+        #self.env.ast = ref_ast.copy()
+
+        msg1 = ""
+        msg2 = ""
+
+        reward_mode = "reward"
+
+        self.reset(self.passed)
+        reward_lists = [[] for _ in range(self.N_LC)]
+        for t in tqdm(range(MAX_STEPS)):
+            if any(self.done):
+                if any(self.passed):
+                    msg1 = "PASSED"
+                    break
+                #else: print("Did not converged to valid solution.")
+                
+            #######################################################
+            preds = []
+            self.model.eval()
+            for state in self.states:
+                with torch.no_grad():
+                    input = self.input_data(state[:1006])
+                    rewards = self.model(input)
+                    preds.append(rewards.cpu().numpy().reshape(40, 20).T)
+
+            best_action, actions = self.action_selector(preds)
+            if best_action is None:
+                msg1 = "No Improving Action Detected"
+                break
+            for i, env in enumerate(self.envs):
+                self.states[i], self.rewards[i], self.done[i], self.passed[i] = env.step(best_action)
+
+                amp_lc_target = env.target_lc - np.mean(env.target_lc)
+                amp_lc_target = amp_lc_target / np.max(np.abs(amp_lc_target))
+                amp_lc_pred = env.lc_pred - np.mean(env.lc_pred)
+                amp_lc_pred = amp_lc_pred / np.max(np.abs(amp_lc_pred))
+                if reward_mode == "reward":
+                    reward_lists[i].append(self.rewards[i])
+                elif reward_mode == "recon":
+                    recon_loss = np.mean((amp_lc_pred - amp_lc_target)**2)
+                    reward_lists[i].append(recon_loss) # updated for recon_loss plotting
+            if t%1 == 0:
+                preds_T = [pred.T for pred in preds]
+                for LC_i in range(self.N_LC):
+                    self.envs[LC_i].show((reward_lists[LC_i], preds_T[LC_i], best_action, actions, self.K), path=save_path, name='Env No.%02d t = %02d - %d-th LC.png'%(env_i, t, LC_i), reward_mode=reward_mode)
+                #self.envs[0].multishow((reward_lists, preds_T, best_action, actions, self.K), path=save_path, name='Env No.%02d t = %02d.png'%(env_i, t))
+
+        #if len(reward_list) != 0:
+        #    msg2 ="Reward Change : %.4f -> %.4f"%(reward_list[0], reward_list[-1]) 
+        
+        print(msg1)
+        #print(msg2)
+        #return msg1 + " | " + msg2      
+        return ""
