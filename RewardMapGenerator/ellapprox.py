@@ -402,9 +402,9 @@ def fit_multiview_ellipsoid(
 
 DATA_PATH = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data/data_pole_axis_total_preprocessed.npz"
 DATA_PATH = r"C:\Users\dlgkr\OneDrive\Desktop\code\astronomy\asteroid_AI\data\data_pole_axis_total_preprocessedm3.npz"
-start_idx = 900
-final_idx = start_idx + 50
-local_i = 24
+start_idx = 600
+final_idx = start_idx + 100
+local_i = 31
 
 total_data = np.load(DATA_PATH)
 X_full = total_data["lc_arr"]
@@ -418,7 +418,7 @@ ell = ell_total[local_i]
 
 
 merge_num = 3
-use_num = 2
+use_num = 3
 lc_len = 100
 obs_lcs = [x[i*lc_len:(i+1)*lc_len] for i in range(use_num)]
 lc_infos = [x[lc_len*merge_num+i*(9+5):lc_len*merge_num+i*(9+5)+9] for i in range(use_num)]
@@ -472,13 +472,20 @@ plt.show()
 from FinalAgent import AstEnv, MultiAgentRunner, QValueNet_CNN_B1
 import torch
 from torch import nn
+import os
 
 MODEL_PATH = "C:/Users/dlgkr/Downloads/train0208_1/40model.pt"
 SAVE_PATH = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data_analysis/final_agent/"
 
+SAVE_FOLDER = str(start_idx)+"/"
+if not os.path.exists(SAVE_PATH+SAVE_FOLDER):                # 폴더가 없으면
+    os.makedirs(SAVE_PATH+SAVE_FOLDER)
+SAVE_PATH = SAVE_PATH + SAVE_FOLDER
+
+
 N_SET = (40, 20)
 LC_UNIT_LEN = 100
-REWARD_DOMAIN = [-400, 70]
+REWARD_DOMAIN = [-400, 90]
 
 hidden_dim = 4096
 
@@ -498,7 +505,7 @@ for i in range(use_num):
         reward_domain=REWARD_DOMAIN,
         N_set=N_SET,
         lc_unit_len=LC_UNIT_LEN,
-        ell_init=(True, ell)
+        ell_init=(True, result['ell_init'])
     )
     envs.append(env)
 

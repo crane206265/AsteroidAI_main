@@ -491,11 +491,11 @@ class AstEnv():
 
         # ax2 : Asteroid Polyhedron (View1)
         self._plotAsteroid(ax2, gridX, gridY, gridZ,
-                           elev=view1[0], azim=view1[1], lim_set=lim_set)
+                           elev=view1[0], azim=view1[1], lim_set=lim_set, lc_infos=(Sdir, Edir))
         
         # ax3 : Asteroid Polyhedron (View2)
         self._plotAsteroid(ax3, gridX, gridY, gridZ,
-                           elev=view2[0], azim=view2[1], lim_set=lim_set)
+                           elev=view2[0], azim=view2[1], lim_set=lim_set, lc_infos=(Sdir, Edir))
 
         # ax4 : t - reward Graph
         if reward_mode == "reward":
@@ -719,7 +719,7 @@ class AstEnv():
         #plt.show()
         plt.close()
 
-    def _plotAsteroid(self, ax:plt.Axes, gridX, gridY, gridZ, elev=30, azim=-60, lim_set=(-10, 10)):
+    def _plotAsteroid(self, ax:plt.Axes, gridX, gridY, gridZ, elev=30, azim=-60, lim_set=(-10, 10), lc_infos = None):
         #ax.plot_surface(gridX, gridY, gridZ)
 
         ########## Advance Plotting Options ##########
@@ -737,6 +737,10 @@ class AstEnv():
             linewidth=0.2,
             alpha=0.2
         )
+
+        if not (lc_infos is None):
+            ax.plot((0, 20*lc_infos[0][0]), (0, 20*lc_infos[0][1]), (0, 20*lc_infos[0][2]), linestyle="solid", color='orangered')
+            ax.plot((0, 20*lc_infos[1][0]), (0, 20*lc_infos[1][1]), (0, 20*lc_infos[1][2]), linestyle="solid", color='green')
 
         ax.set_title("Modeled Asteroid")
         ax.set_title("Modeled Asteroid", pad=15) #30 w/ grid
@@ -1157,9 +1161,10 @@ class MultiAgentRunner():
 
         # predicted maximin map
         pred_min = np.min(pred_maps, axis=0)
-        pred_mean = np.mean(pred_maps, axis=0)
-        w1 = 0.1
-        w2 = 0.9
+        #pred_mean = np.mean(pred_maps, axis=0)
+        pred_mean = np.average(pred_maps, axis=0, weights=(100-np.array(self.rewards)))
+        w1 = 0.3
+        w2 = 0.7
         pred_score = (w1*pred_min + w2*pred_mean) / (w1+w2)
         for it in range(2):
             idxs = np.argsort(pred_score.reshape(-1))[::-1][self.K * it : self.K * (it + 1)]
@@ -1222,6 +1227,7 @@ class MultiAgentRunner():
             if best_action is None:
                 msg1 = "No Improving Action Detected"
                 break
+            
             for i, env in enumerate(self.envs):
                 self.states[i], self.rewards[i], self.done[i], self.passed[i] = env.step(best_action)
 
