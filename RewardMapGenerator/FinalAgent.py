@@ -524,7 +524,10 @@ class AstEnv():
         ax5.legend()
 
         # ax6 : (Predicted) Reward Map + Selected Actions
-        reward_map_img = ax6.imshow(reward_map.T, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)))
+        import matplotlib.cm as cm
+        current_cmap = cm.get_cmap('viridis').copy()
+        current_cmap.set_bad(color='white')
+        reward_map_img = ax6.imshow(reward_map.T, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)), cmap=current_cmap)
         ax6.scatter(40*sel_actions[:, 0], 20*sel_actions[:, 1], s=80, facecolors='none', edgecolors='r')
         ax6.scatter(40*best_action[0], 20*best_action[1], marker='*', color='gold')
         ax6.set_title("(Predicted) Reward Map + Selected Actions (K=%d)"%(K))
@@ -1120,12 +1123,24 @@ class MultiAgentRunner():
 
         self.model = model
 
+        self.action_grid = self.make_action_grid().to(device)
+
     def reset(self, passed):
-        self.states = [env.reset(passed) for env in self.envs]
+        self.states = [env.reset(passed[i]) for i, env in enumerate(self.envs)]
         self.rewards = [env.reward0 for env in self.envs]
         self.done = [False]*self.N_LC
         self.passed = [False]*self.N_LC
 
+    def make_action_grid(self):
+        actions = []    
+
+        for i in range(40):
+            for j in range(20):
+                actions.append([i / 40, j / 20, 0.1, 0.1])
+
+        return torch.tensor(actions, dtype=torch.float32)
+
+    """
     def input_data(self, state):
         # GPU 최적화 필요 !!!!!!!!!!!!!!
         input_list = []
@@ -1139,6 +1154,14 @@ class MultiAgentRunner():
             input_list.append(torch.unsqueeze(input, 0))
         total_input = torch.concat(input_list, dim=0)
         return total_input
+    """
+    
+    def input_data(self, state):
+        # GPU 최적화된 버전
+        state_t = torch.as_tensor(state, dtype=torch.float32, device=device)
+        state_batch = state_t.unsqueeze(0).expand(800, -1)
+
+        return torch.cat([state_batch, self.action_grid], dim=1)
 
     def action_selector(self, pred_maps):
         pred_maps = np.stack(pred_maps, axis=0)
@@ -1193,7 +1216,7 @@ class MultiAgentRunner():
             print("max(test_rewards)(%.3f) <= current score(%.3f)"%(np.max(test_rewards), current_score))
             return None, actions
 
-        return actions[np.argmax(test_rewards), :], actions
+        return actions[np.nanargmax(test_rewards), :], actions
 
     def run(self, env_i, save_path):
         # env_i : parameter for just termial printing
@@ -1207,6 +1230,7 @@ class MultiAgentRunner():
 
         self.reset(self.passed)
         reward_lists = [[] for _ in range(self.N_LC)]
+        M = 5
         for t in tqdm(range(MAX_STEPS)):
             if any(self.done):
                 if any(self.passed):
@@ -1215,19 +1239,20 @@ class MultiAgentRunner():
                 #else: print("Did not converged to valid solution.")
                 
             #######################################################
-            preds = []
             self.model.eval()
-            for state in self.states:
-                with torch.no_grad():
-                    input = self.input_data(state[:1006])
-                    rewards = self.model(input)
-                    preds.append(rewards.cpu().numpy().reshape(40, 20).T)
+            if t%M == 0: # to reuse map
+                preds = []
+                for state in self.states:
+                    with torch.no_grad():
+                        input = self.input_data(state[:1006])
+                        rewards = self.model(input)
+                        preds.append(rewards.cpu().numpy().reshape(40, 20).T)
 
             best_action, actions = self.action_selector(preds)
             if best_action is None:
                 msg1 = "No Improving Action Detected"
                 break
-            
+
             for i, env in enumerate(self.envs):
                 self.states[i], self.rewards[i], self.done[i], self.passed[i] = env.step(best_action)
 
@@ -1240,12 +1265,16 @@ class MultiAgentRunner():
                 elif reward_mode == "recon":
                     recon_loss = np.mean((amp_lc_pred - amp_lc_target)**2)
                     reward_lists[i].append(recon_loss) # updated for recon_loss plotting
+            
             if t%1 == 0:
                 preds_T = [pred.T for pred in preds]
                 for LC_i in range(self.N_LC):
                     self.envs[LC_i].show((reward_lists[LC_i], preds_T[LC_i], best_action, actions, self.K), path=save_path, name='Env No.%02d t = %02d - %d-th LC.png'%(env_i, t, LC_i), reward_mode=reward_mode)
                 #self.envs[0].multishow((reward_lists, preds_T, best_action, actions, self.K), path=save_path, name='Env No.%02d t = %02d.png'%(env_i, t))
-
+            
+            # 이미 고른 action 0 처리
+            best_idx = (int(best_action[0]*40), int(best_action[1]*20))
+            for i in range(len(preds)): preds[i][best_idx[1], best_idx[0]] = 0
         #if len(reward_list) != 0:
         #    msg2 ="Reward Change : %.4f -> %.4f"%(reward_list[0], reward_list[-1]) 
         

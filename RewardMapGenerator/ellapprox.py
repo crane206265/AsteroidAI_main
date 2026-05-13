@@ -222,6 +222,8 @@ class MultiViewEllipsoidFitter:
     def objective(self, params):
         """
         params = [ba, ca, long, lat]
+        Balanced multi-view objective.
+        Smaller is better.
         """
         ba, ca, long, lat = params
 
@@ -231,31 +233,37 @@ class MultiViewEllipsoidFitter:
 
         long = long % (2 * PI)
         lat = lat % PI
-
         params = np.array([ba, ca, long, lat])
 
         ast = self.sim.make_ast_from_params(params)
 
-        total = 0.0
-        wsum = 0.0
+        losses = []
+        weights = []
 
         for obs, info, w in zip(self.obs_lcs, self.lc_infos, self.weights):
             pred = self.sim.simulate_from_ast(ast, info)
             loss = lc_loss(obs, pred)
 
-            total += w * loss
-            wsum += w
+            losses.append(loss)
+            weights.append(w)
 
-            # Early rejection
-            if total / max(wsum, 1e-12) > 1e8:
-                break
+        losses = np.asarray(losses, dtype=float)
+        weights = np.asarray(weights, dtype=float)
 
-        return total / max(wsum, 1e-12)
+        weights = weights / (np.sum(weights) + 1e-12)
+
+        mean_loss = np.sum(weights * losses)
+        max_loss = np.max(losses)
+
+        std_loss = np.sqrt(np.sum(weights * (losses - mean_loss) ** 2))
+
+        # balanced objective
+        return 0.7 * max_loss + 0.3 * mean_loss + 0.2 * std_loss
 
     def fit(
         self,
-        ba_range=(0.4, 1.0),
-        ca_range=(0.2, 1.0),
+        ba_range=(0.5, 1.0),
+        ca_range=(0.4, 1.0),
         long_range=(0.0, 2 * PI),
         lat_range=(0.0, PI),
         maxiter_global=25,
@@ -402,9 +410,9 @@ def fit_multiview_ellipsoid(
 
 DATA_PATH = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data/data_pole_axis_total_preprocessed.npz"
 DATA_PATH = r"C:\Users\dlgkr\OneDrive\Desktop\code\astronomy\asteroid_AI\data\data_pole_axis_total_preprocessedm3.npz"
-start_idx = 600
+start_idx = 800
 final_idx = start_idx + 100
-local_i = 31
+local_i = 21
 
 total_data = np.load(DATA_PATH)
 X_full = total_data["lc_arr"]
@@ -417,7 +425,7 @@ x = X_total[local_i]
 ell = ell_total[local_i]
 
 
-merge_num = 3
+merge_num = 3 
 use_num = 3
 lc_len = 100
 obs_lcs = [x[i*lc_len:(i+1)*lc_len] for i in range(use_num)]
@@ -430,12 +438,12 @@ plt.show()
 result = fit_multiview_ellipsoid(
     obs_lcs=obs_lcs,
     lc_infos=lc_infos,
-    N_set=(20, 10),
+    N_set=(10, 5),
     lc_unit_len=lc_len,
     mean_radius=10.0,
     maxiter_global=15,
     popsize=8,
-    local_refine=True,
+    local_refine=False,
 )
 
 print("ba:", result["ba"])
@@ -478,7 +486,7 @@ MODEL_PATH = "C:/Users/dlgkr/Downloads/train0208_1/40model.pt"
 SAVE_PATH = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data_analysis/final_agent/"
 
 SAVE_FOLDER = str(start_idx)+"/"
-if not os.path.exists(SAVE_PATH+SAVE_FOLDER):                # 폴더가 없으면
+if not os.path.exists(SAVE_PATH+SAVE_FOLDER): # 폴더가 없으면
     os.makedirs(SAVE_PATH+SAVE_FOLDER)
 SAVE_PATH = SAVE_PATH + SAVE_FOLDER
 
