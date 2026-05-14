@@ -1,5 +1,6 @@
 import numpy as np
 from tqdm import tqdm
+import random
 import gc
 
 from multiprocessing import Pool, cpu_count
@@ -70,6 +71,10 @@ def run_one(local_i):
     # Convert local index to global index
     global_i = START_IDX + local_i
 
+    seed_i = 206265 + global_i
+    np.random.seed(seed_i)
+    random.seed(seed_i)
+
     # Extract data for this index
     x = X_total[local_i]
     ell = ell_total[local_i]
@@ -105,8 +110,8 @@ def run_one(local_i):
 
 def main():
     # ---- Range of global indices to compute ----
-    start_idx = 600#1300       # inclusive
-    final_idx = 1000#1500     # exclusive (global index)
+    start_idx = 200#600      # inclusive
+    final_idx = 500#1000     # exclusive (global index)
     num_samples = final_idx - start_idx
 
     # Number of worker processes (tune according to your CPU)
@@ -179,7 +184,8 @@ def main():
                 print("----- Dataset chunk separated -----")
 
         # If there is a remaining chunk that was not saved (when num_samples % 4 != 0)
-        if total_data_set_defined and total_data_set_arr is not None:
+        # wrong version (~260513)
+        """if total_data_set_defined and total_data_set_arr is not None:
             file_suffix = str(start_idx + num_samples)
             np.save(
                 SAVE_PATH + prefix + f"data_pole_axis_RL_preset_{file_suffix}.npy",
@@ -189,9 +195,26 @@ def main():
                 SAVE_PATH + prefix + f"data_pole_axis_RL_preset_info{file_suffix}.npz",
                 passed_idx=np.array(passed_idx_list, dtype=int),
                 reward0=np.array(reward0_list, dtype=float)
+            )"""
+
+        # final data save
+        if total_data_set_defined and total_data_set_arr is not None:
+            file_suffix = str(start_idx + num_samples)
+            np.save(
+                SAVE_PATH + prefix + f"data_pole_axis_RL_preset_{file_suffix}.npy",
+                total_data_set_arr
             )
-            print("Saved final chunk at", start_idx + num_samples)
             print(total_data_set_arr.shape)
+            print("Saved final chunk at", start_idx + num_samples)
+
+        # final info save는 data 유무와 무관하게
+        if len(passed_idx_list) > 0 or len(reward0_list) > 0:
+            file_suffix = str(start_idx + num_samples)
+            np.savez(
+                SAVE_PATH + prefix + f"data_pole_axis_RL_preset_info{file_suffix}.npz",
+                passed_idx=np.array(passed_idx_list, dtype=int),
+                reward0=np.array(reward0_list, dtype=float)
+            )
 
 
 if __name__ == "__main__":

@@ -78,7 +78,11 @@ class EllipsoidForwardSimulator:
         R_eps = self._get_R_eps(rot_axis)
 
         # Same as AstEnv.__lc_gen()
-        N_arr = ast.surf_vec_arr / np.sqrt(np.abs(ast.surf_vec_arr) + 1e-15)
+        # correct law
+        surf = self.ast.surf_vec_arr
+        area = LA.norm(surf, axis=-1, keepdims=True)
+        N_arr = surf / np.sqrt(area + 1e-15)
+        N_arr[area[..., 0] < 1e-12] = 0
         N_arr = N_arr.reshape(-1, 3)
 
         generated_lc = np.zeros(self.lc_unit_len)

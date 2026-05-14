@@ -13,9 +13,9 @@ PI = 3.1415926535
 MAX_STEPS = 3000 #per episode
 
 # seed
-seed = 206265
-np.random.seed(seed)
-random.seed(seed)
+# seed = 206265
+# np.random.seed(seed)
+# random.seed(seed)
 
 ############################## 25.11.17 ##############################
 # Refactorized Code only for 1 lc - 1 Env case
@@ -409,7 +409,13 @@ class AstEnv():
         Sdir = lc_info[0:3]
         Edir = lc_info[3:6]
         #rot_axis = lc_info[6:9]
-        N_arr = self.ast.surf_vec_arr / np.sqrt(np.abs(self.ast.surf_vec_arr)+1e-15)
+        #N_arr = self.ast.surf_vec_arr / np.sqrt(np.abs(self.ast.surf_vec_arr)+1e-15) # wrong law
+        
+        # correct law
+        surf = self.ast.surf_vec_arr
+        area = LA.norm(surf, axis=-1, keepdims=True)
+        N_arr = surf / np.sqrt(area + 1e-15)
+        N_arr[area[..., 0] < 1e-12] = 0
         N_arr = N_arr.reshape(-1, 3)
 
         generated_lc = np.zeros(self.lc_unit_len)
@@ -433,7 +439,8 @@ class AstEnv():
         input_lc = [LC Length]
         """
         lc_len = input_lc.shape[-1]
-        lc_mean0 = (np.sum(input_lc, axis=-1) - (input_lc[..., 0] + input_lc[..., -1])/2) / lc_len
+        #lc_mean0 = (np.sum(input_lc, axis=-1) - (input_lc[..., 0] + input_lc[..., -1])/2) / lc_len
+        lc_mean0 = np.mean(input_lc, axis=-1)
         return lc_mean0
     
     def __amp_lc(self, input_lc):
