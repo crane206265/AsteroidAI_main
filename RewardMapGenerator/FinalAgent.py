@@ -14,7 +14,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 PI = 3.1415926535
-MAX_STEPS = 500 #per episode
+MAX_STEPS = 100 #per episode
 
 # seed
 seed = 206265
@@ -1192,13 +1192,14 @@ class MultiAgentRunner():
         # predicted maximin map
         pred_min = np.min(pred_maps, axis=0)
         #pred_mean = np.mean(pred_maps, axis=0)
-        pred_mean = np.average(pred_maps, axis=0, weights=(100-np.array(self.rewards)))
+        weights = (100-np.array(self.rewards))
+        pred_mean = np.average(pred_maps, axis=0, weights=weights)
         w1 = 0.3
         w2 = 0.7
         pred_score = (w1*pred_min + w2*pred_mean) / (w1+w2)
         for it in range(2):
             idxs = np.argsort(pred_score.reshape(-1))[::-1][self.K * it : self.K * (it + 1)]
-            actions = np.stack([np.array([((idx%int(40))/40)%1, ((idx//int(40))/20)%1, 0.1, 0.1]) for idx in idxs], axis=0)
+            actions = np.stack([np.array([((idx%int(40))/40)%1, ((idx//int(40))/20)%1, 0.2, 0.2]) for idx in idxs], axis=0)
 
             test_rewards = np.full(self.K, -np.inf)
             ref_asts = [env.ast.copy() for env in self.envs] # backup all env asteroids
@@ -1253,7 +1254,8 @@ class MultiAgentRunner():
                     with torch.no_grad():
                         input = self.input_data(state[:1006])
                         rewards = self.model(input)
-                        preds.append(rewards.cpu().numpy().reshape(40, 20).T)
+                        rewards = rewards.cpu().numpy().reshape(40, 20).T
+                        preds.append((rewards - np.mean(rewards))/np.std(rewards))
 
             best_action, actions = self.action_selector(preds)
             if best_action is None:

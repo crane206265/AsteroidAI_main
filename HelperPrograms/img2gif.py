@@ -8,7 +8,7 @@ from skimage.util import img_as_ubyte
 
 
 BASE_PATH = r"C:\Users\dlgkr\OneDrive\Desktop\code\astronomy\asteroid_AI\data_analysis\final_agent"
-idx = 821
+idx = 325
 
 FOLDER_PATH = "/"+str(idx - idx%100)+"/"
 

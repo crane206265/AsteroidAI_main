@@ -79,7 +79,7 @@ class EllipsoidForwardSimulator:
 
         # Same as AstEnv.__lc_gen()
         # correct law
-        surf = self.ast.surf_vec_arr
+        surf = ast.surf_vec_arr
         area = LA.norm(surf, axis=-1, keepdims=True)
         N_arr = surf / np.sqrt(area + 1e-15)
         N_arr[area[..., 0] < 1e-12] = 0
@@ -414,9 +414,13 @@ def fit_multiview_ellipsoid(
 
 DATA_PATH = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data/data_pole_axis_total_preprocessed.npz"
 DATA_PATH = r"C:\Users\dlgkr\OneDrive\Desktop\code\astronomy\asteroid_AI\data\data_pole_axis_total_preprocessedm3.npz"
-start_idx = 800
+start_idx = 200
 final_idx = start_idx + 100
-local_i = 21
+local_i = 60
+
+import matplotlib.pyplot as plt
+
+
 
 total_data = np.load(DATA_PATH)
 X_full = total_data["lc_arr"]
@@ -425,35 +429,44 @@ ell_full = total_data["ell_arr"]
 X_total = X_full[start_idx:final_idx].copy()
 ell_total = ell_full[start_idx:final_idx].copy()
 
-x = X_total[local_i]
-ell = ell_total[local_i]
 
+while True:
+    x = X_total[local_i]
+    ell = ell_total[local_i]
 
-merge_num = 3 
-use_num = 3
-lc_len = 100
-obs_lcs = [x[i*lc_len:(i+1)*lc_len] for i in range(use_num)]
-lc_infos = [x[lc_len*merge_num+i*(9+5):lc_len*merge_num+i*(9+5)+9] for i in range(use_num)]
+    merge_num = 3 
+    use_num = 3
+    lc_len = 100
+    obs_lcs = [x[i*lc_len:(i+1)*lc_len] for i in range(use_num)]
+    lc_infos = [x[lc_len*merge_num+i*(9+5):lc_len*merge_num+i*(9+5)+9] for i in range(use_num)]
 
-import matplotlib.pyplot as plt
+    result = fit_multiview_ellipsoid(
+        obs_lcs=obs_lcs,
+        lc_infos=lc_infos,
+        N_set=(20, 10),
+        lc_unit_len=lc_len,
+        mean_radius=10.0,
+        maxiter_global=15,
+        popsize=8,
+        local_refine=False,
+    )
+
+    if result["loss"] < 0.15:
+        print("local i = %d | loss = %f"%(local_i, result["loss"]))
+        local_i += 1
+    else:
+        print("local i = %d | loss = %f"%(local_i, result["loss"]))
+        break
+
 for i in range(use_num): plt.plot(obs_lcs[i])
 plt.show()
-
-result = fit_multiview_ellipsoid(
-    obs_lcs=obs_lcs,
-    lc_infos=lc_infos,
-    N_set=(10, 5),
-    lc_unit_len=lc_len,
-    mean_radius=10.0,
-    maxiter_global=15,
-    popsize=8,
-    local_refine=False,
-)
 
 print("ba:", result["ba"])
 print("ca:", result["ca"])
 print("tilt:", result["tilt"])
 print("loss:", result["loss"])
+
+
 
 # AstEnv 초기화용
 ell_init = (True, result["ell_init"])
@@ -467,15 +480,15 @@ def scale_pred_to_obs(obs, pred):
 
 pred_lcs = result["pred_lcs"]
 
+plt.figure()
 for i in range(use_num):
     pred_scaled = scale_pred_to_obs(obs_lcs[i], pred_lcs[i])
 
-    plt.figure()
     plt.plot(obs_lcs[i], label="obs", linestyle="--")
     plt.plot(pred_scaled, label="reconstructed scaled")
 
-    plt.title(f"LC view {i}")
-    plt.legend()
+plt.title(f"LC view {i}")
+plt.legend()
 
 plt.show()
 
@@ -486,7 +499,7 @@ import torch
 from torch import nn
 import os
 
-MODEL_PATH = "C:/Users/dlgkr/Downloads/train0208_1/40model.pt"
+MODEL_PATH = "C:/Users/dlgkr/Downloads/train0521_1/40model.pt"
 SAVE_PATH = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data_analysis/final_agent/"
 
 SAVE_FOLDER = str(start_idx)+"/"

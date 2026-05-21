@@ -110,7 +110,7 @@ def run_one(local_i):
 
 def main():
     # ---- Range of global indices to compute ----
-    start_idx = 200#600      # inclusive
+    start_idx = 312#600      # inclusive
     final_idx = 500#1000     # exclusive (global index)
     num_samples = final_idx - start_idx
 
