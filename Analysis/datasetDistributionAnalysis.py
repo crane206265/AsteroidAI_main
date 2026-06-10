@@ -6,18 +6,26 @@ import gc
 
 # load data
 base_path = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/"
-test_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/data_pole_axis_RL_preset_batch_filtered_3.npy"
+#test_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/data_pole_axis_RL_preset_batch_filtered_3.npy"
+# new set (corrected scattering law)
+test_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/RL_domain1/data_pole_axis_RL_preset_batch_4.npy"
 
 test_data = np.load(test_data_path)[1:]
 gc.collect()
 
-train_data_paths = ["data_pole_axis_RL_preset_batch_0.npy",
-                    "data_pole_axis_RL_preset_batch_1.npy",
+#train_data_paths = ["data_pole_axis_RL_preset_batch_0.npy",
+#                    "data_pole_axis_RL_preset_batch_1.npy",
+#                    "data_pole_axis_RL_preset_batch_2.npy",
+#                    "data_pole_axis_RL_preset_batch_filtered_4.npy"]
+# new set (corrected scattering law)
+train_data_paths = ["data_pole_axis_RL_preset_batch_1.npy",
                     "data_pole_axis_RL_preset_batch_2.npy",
-                    "data_pole_axis_RL_preset_batch_filtered_4.npy"]
+                    "data_pole_axis_RL_preset_batch_3.npy",
+                    "data_pole_axis_RL_preset_batch_5.npy",
+                    "data_pole_axis_RL_preset_batch_6.npy"]
 train_data_list = []
 for data_name in train_data_paths[:]:
-    train_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/" + data_name
+    train_data_path = base_path + "data/pole_axis_RL_data_batches/unrolled/RL_domain1/" + data_name
     train_data_list.append(np.load(train_data_path)[1:])
 train_data = np.concatenate(train_data_list, axis=0)
 gc.collect()

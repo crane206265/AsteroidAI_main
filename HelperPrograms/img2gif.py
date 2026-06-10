@@ -8,7 +8,7 @@ from skimage.util import img_as_ubyte
 
 
 BASE_PATH = r"C:\Users\dlgkr\OneDrive\Desktop\code\astronomy\asteroid_AI\data_analysis\final_agent"
-idx = 325
+idx = 450
 
 FOLDER_PATH = "/"+str(idx - idx%100)+"/"
 
@@ -38,7 +38,7 @@ for img_list in img_LC_list:
 
 gif_config = {
     'loop':0, ## 0으로 세팅하면 무한 반복, 3으로 설정하면 3번 반복
-    'duration': 1.0 ## 다음 화면으로 넘어가는 시간
+    'duration': 0.2 ## 다음 화면으로 넘어가는 시간
 }
  
 for i in tqdm(range(len(img_LC_list))):
