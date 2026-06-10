@@ -189,6 +189,56 @@ def lc_loss(obs, pred, use_derivative=True):
 
     return 1.2 * loss_p + 0.5 * loss_i + 0.3 * loss_d
 
+def sinusoidal_score(lc, harmonic=2, eps=1e-12):
+    """
+    Return how close LC is to a single sinusoidal harmonic.
+    
+    harmonic=1 : one peak per period
+    harmonic=2 : double-peaked ellipsoid-like LC
+    """
+    lc = np.asarray(lc, dtype=float)
+    y = lc - lc_mean(lc)
+
+    var = np.mean(y ** 2)
+    if var < eps:
+        return 0.0
+
+    n = len(y)
+    t = np.arange(n)
+    phase = 2 * PI * harmonic * t / n
+
+    X = np.stack([
+        np.sin(phase),
+        np.cos(phase),
+    ], axis=1)
+
+    # least-square fit: y ~ A sin + B cos
+    coef, *_ = LA.lstsq(X, y, rcond=None)
+    y_fit = X @ coef
+
+    score = 1.0 - np.mean((y - y_fit) ** 2) / (var + eps)
+
+    return float(np.clip(score, 0.0, 1.0))
+
+
+def make_lc_weights_by_sinusoidality(
+    obs_lcs,
+    harmonic=2,
+    w_min=0.5,
+    w_max=3.0,
+    sharpness=2.0,
+):
+    """
+    More sinusoidal LC gets larger fitting weight.
+    """
+    scores = np.array([
+        sinusoidal_score(lc, harmonic=harmonic)
+        for lc in obs_lcs
+    ], dtype=float)
+
+    weights = w_min + (w_max - w_min) * (scores ** sharpness)
+
+    return weights
 
 # ============================================================
 # Multi-view objective
@@ -257,7 +307,12 @@ class MultiViewEllipsoidFitter:
         weights = weights / (np.sum(weights) + 1e-12)
 
         mean_loss = np.sum(weights * losses)
-        max_loss = np.max(losses)
+
+        # weighted max-loss
+        # priority has mean 1, so if all weights are equal,
+        # this reduces exactly to ordinary max_loss = max(losses)
+        priority = weights * len(weights)
+        max_loss = np.max(priority * losses)
 
         std_loss = np.sqrt(np.sum(weights * (losses - mean_loss) ** 2))
 
@@ -384,6 +439,7 @@ def fit_multiview_ellipsoid(
     popsize=8,
     local_refine=True,
     verbose=True,
+    weights=None,   # 추가
 ):
     fitter = MultiViewEllipsoidFitter(
         obs_lcs=obs_lcs,
@@ -391,6 +447,7 @@ def fit_multiview_ellipsoid(
         N_set=N_set,
         lc_unit_len=lc_unit_len,
         mean_radius=mean_radius,
+        weights=weights,   # 추가
     )
 
     result = fitter.fit(
@@ -406,6 +463,21 @@ def fit_multiview_ellipsoid(
     return result
 
 
+def SNRNoise(SNR, lc, mode=True):
+    if not mode: return lc
+    sigma_A = np.std(lc, axis=-1)
+    sigma_N1 = sigma_A / SNR
+    sigma_N1 = sigma_N1.reshape(-1, 1)
+    noise1 = np.random.normal(0, np.tile(sigma_N1, (1, lc.shape[-1])), lc.shape)
+
+    sigma_B = np.mean(lc, axis=-1)
+    sigma_N2 = sigma_B / (SNR*8)
+    sigma_N2 = sigma_N2.reshape(-1, 1)
+    noise2 = np.random.normal(0, np.tile(sigma_N2, (1, lc.shape[-1])), lc.shape)
+
+    return lc + noise1 + noise2
+
+
 
 # ------------------------- MAIN -------------------------
 
@@ -413,10 +485,10 @@ def fit_multiview_ellipsoid(
 # lc_infos: list[np.ndarray], each shape = (9,)
 
 DATA_PATH = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data/data_pole_axis_total_preprocessed.npz"
-DATA_PATH = r"C:\Users\dlgkr\OneDrive\Desktop\code\astronomy\asteroid_AI\data\data_pole_axis_total_preprocessedm3.npz"
-start_idx = 200
+DATA_PATH = r"C:\Users\dlgkr\OneDrive\Desktop\code\astronomy\asteroid_AI\data\data_pole_axis_total_preprocessed31.npz"
+start_idx = 400
 final_idx = start_idx + 100
-local_i = 60
+local_i = 50
 
 import matplotlib.pyplot as plt
 
@@ -425,9 +497,45 @@ import matplotlib.pyplot as plt
 total_data = np.load(DATA_PATH)
 X_full = total_data["lc_arr"]
 ell_full = total_data["ell_arr"]
+#Y_full = total_data["r_arr"]
 
 X_total = X_full[start_idx:final_idx].copy()
 ell_total = ell_full[start_idx:final_idx].copy()
+#Y_total = Y_full[start_idx:final_idx].copy()
+
+
+# ============================================================
+# Clean merged-format parser
+# ============================================================
+# New clean merge format:
+#   lc_arr row = [LC_0 ... LC_{m-1} | lc_info_0 ... lc_info_{m-1}]
+#   ell_arr row = [a, b, c, long, lat]
+# where each LC has length lc_len and each lc_info has length 9.
+def extract_clean_merged_sample(x, ell, merge_num, lc_len=100, use_num=None):
+    x = np.asarray(x, dtype=float)
+    ell = np.asarray(ell, dtype=float)
+
+    if use_num is None:
+        use_num = merge_num
+
+    if use_num > merge_num:
+        raise ValueError(f"use_num={use_num} cannot exceed merge_num={merge_num}")
+
+    expected_len = merge_num * lc_len + merge_num * 9
+    if len(x) != expected_len:
+        raise ValueError(
+            f"Clean merged format expected len(x)={expected_len}, but got {len(x)}. "
+            f"Expected [LCs({merge_num * lc_len}) | infos({merge_num * 9})]. "
+            "If this file is old format, use the old parser."
+        )
+
+    all_lcs = x[:merge_num * lc_len].reshape(merge_num, lc_len)
+
+    info_start = merge_num * lc_len
+    all_lc_infos = x[info_start:info_start + merge_num * 9].reshape(merge_num, 9)
+
+    return all_lcs[:use_num], all_lc_infos[:use_num], ell
+    #return all_lcs[1:1+use_num], all_lc_infos[1:1+use_num], ell
 
 
 while True:
@@ -437,8 +545,36 @@ while True:
     merge_num = 3 
     use_num = 3
     lc_len = 100
-    obs_lcs = [x[i*lc_len:(i+1)*lc_len] for i in range(use_num)]
-    lc_infos = [x[lc_len*merge_num+i*(9+5):lc_len*merge_num+i*(9+5)+9] for i in range(use_num)]
+    obs_lcs0, lc_infos, ell = extract_clean_merged_sample(
+        x=x,
+        ell=ell,
+        merge_num=merge_num,
+        lc_len=lc_len,
+        use_num=use_num,
+    )
+
+    SNR = 3
+    obs_lcs = SNRNoise(SNR, obs_lcs0, mode=True)
+
+    # ==========================================
+    # 2. Smoothing (Savitzky-Golay 필터)
+    # ==========================================
+    # 소행성 피크의 날카로운 형태를 잘 보존하면서 고주파 노이즈를 제거하기 위해 Sav-Gol 필터를 사용합니다.
+    # window_length (홀수), polyorder (다항식 차수) 설정
+    from scipy.signal import savgol_filter
+    window_length = 21#21
+    polyorder = 3
+    obs_lcs = savgol_filter(obs_lcs, window_length, polyorder)
+    
+    ell_weights = make_lc_weights_by_sinusoidality(
+        obs_lcs,
+        harmonic=2,
+        w_min=0.5,
+        w_max=4.0,
+        sharpness=2.0,
+    )
+
+    print("ell weights:", ell_weights)
 
     result = fit_multiview_ellipsoid(
         obs_lcs=obs_lcs,
@@ -449,9 +585,10 @@ while True:
         maxiter_global=15,
         popsize=8,
         local_refine=False,
+        weights=ell_weights,
     )
 
-    if result["loss"] < 0.15:
+    if result["loss"] < 0.05: #0.15
         print("local i = %d | loss = %f"%(local_i, result["loss"]))
         local_i += 1
     else:
@@ -480,26 +617,45 @@ def scale_pred_to_obs(obs, pred):
 
 pred_lcs = result["pred_lcs"]
 
-plt.figure()
+plt.figure(figsize=(10, 7))
 for i in range(use_num):
     pred_scaled = scale_pred_to_obs(obs_lcs[i], pred_lcs[i])
 
-    plt.plot(obs_lcs[i], label="obs", linestyle="--")
-    plt.plot(pred_scaled, label="reconstructed scaled")
+    plt.plot(obs_lcs[i], label=f"obs #{i}", marker=".", linestyle='')
+    plt.plot(obs_lcs0[i], linestyle="solid")
 
-plt.title(f"LC view {i}")
+plt.title(f"Multi-view ellipsoid fit | global idx={start_idx + local_i}")
+plt.xlabel("time index")
+plt.ylabel("flux")
 plt.legend()
+plt.tight_layout()
+plt.show()
 
+plt.figure(figsize=(10, 7))
+for i in range(use_num):
+    pred_scaled = scale_pred_to_obs(obs_lcs[i], pred_lcs[i])
+
+    plt.plot(obs_lcs0[i], linestyle="--")
+    plt.plot(obs_lcs[i], linestyle="", marker=".", label=f"obs #{i}")
+    plt.plot(pred_scaled, linestyle="dotted", label=f"ellipsoid fit #{i}")
+
+plt.title(f"Multi-view ellipsoid fit | global idx={start_idx + local_i}")
+plt.xlabel("time index")
+plt.ylabel("flux")
+plt.legend()
+plt.tight_layout()
 plt.show()
 
 
 
 from FinalAgent import AstEnv, MultiAgentRunner, QValueNet_CNN_B1
+from FinalAgent_analyzer import MultiAgentAnalyzer
 import torch
 from torch import nn
 import os
 
 MODEL_PATH = "C:/Users/dlgkr/Downloads/train0521_1/40model.pt"
+#MODEL_PATH = "C:/Users/dlgkr/Downloads/train0607_1/30model.pt"
 SAVE_PATH = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/data_analysis/final_agent/"
 
 SAVE_FOLDER = str(start_idx)+"/"
@@ -510,7 +666,7 @@ SAVE_PATH = SAVE_PATH + SAVE_FOLDER
 
 N_SET = (40, 20)
 LC_UNIT_LEN = 100
-REWARD_DOMAIN = [-400, 90]
+REWARD_DOMAIN = [-400, 95]
 
 hidden_dim = 4096
 
@@ -520,17 +676,17 @@ model = QValueNet_CNN_B1(input_dim=1010, hidden_dim=hidden_dim, activation=nn.EL
 checkpoint = torch.load(MODEL_PATH, map_location=device)
 model.load_state_dict(checkpoint['model_state_dict'])
 
-
 # Build environment
 envs = []
 for i in range(use_num):
     env = AstEnv(
-        target_lc=obs_lcs[i],
+        target_lc=obs_lcs0[i],
         lc_info=lc_infos[i],
         reward_domain=REWARD_DOMAIN,
         N_set=N_SET,
         lc_unit_len=LC_UNIT_LEN,
-        ell_init=(True, result['ell_init'])
+        #ell_init=(True, result['ell_init'])#+0.3*(np.random.random(result['ell_init'].shape)-0.5))
+        ell_init = (True, (1, 1, 1, 0, 0))
     )
     envs.append(env)
 
@@ -542,3 +698,44 @@ if env.ell_err:
 
 runner = MultiAgentRunner(envs, model)
 msg = runner.run(local_i, SAVE_PATH)
+
+raise
+
+import gc
+BASE_PATH = "C:/Users/dlgkr/OneDrive/Desktop/code/astronomy/asteroid_AI/"
+train_data_paths = [#"RL_domain1/data_pole_axis_RL_preset_batch_1.npy",
+#                    "RL_domain1/data_pole_axis_RL_preset_batch_2.npy",
+#                    "RL_domain1/data_pole_axis_RL_preset_batch_3.npy",
+#                    "RL_domain1/data_pole_axis_RL_preset_batch_5.npy",
+                    "RL_domain1/data_pole_axis_RL_preset_batch_6.npy"] # for corrected scattering law
+#train_data_paths = ["RL_domain1/ideal_data_pole_axis_RL_preset_batch_0.npy",
+#                    "RL_domain1/ideal_data_pole_axis_RL_preset_batch_1.npy",
+#                    "RL_domain1/data_pole_axis_RL_preset_batch_3.npy",
+#                    "RL_domain1/data_pole_axis_RL_preset_batch_5.npy",
+#                    "RL_domain1/data_pole_axis_RL_preset_batch_6.npy"] # for corrected scattering law
+train_data_list = []
+for data_name in train_data_paths[:]:
+    train_data_path = BASE_PATH + "data/pole_axis_RL_data_batches/unrolled/" + data_name
+    print(train_data_path)
+    train_data_list.append(np.load(train_data_path)[1:])
+train_data = np.concatenate(train_data_list, axis=0)
+gc.collect()
+
+
+
+runner = MultiAgentAnalyzer(envs, model)
+Stheta_distn, Etheta_distn, cosA_distn = runner.dirDistn(train_data) 
+
+
+block_idx = np.arange(0, train_data.shape[0], 800)
+lc_pred_dataset   = train_data[block_idx, 900:1000]
+lc_target_dataset = train_data[block_idx, 800:900]
+delta_lc_dataset = lc_pred_dataset - lc_target_dataset    
+predF_dataset           = np.fft.fft(lc_pred_dataset, axis=1)[:, 1:LC_UNIT_LEN//2+1]
+targetF_dataset         = np.fft.fft(lc_target_dataset, axis=1)[:, 1:LC_UNIT_LEN//2+1]
+predF_dataset_mag       = np.log10(np.abs(predF_dataset))
+predF_dataset_mag       -= predF_dataset_mag[1]
+targetF_dataset_mag     = np.log10(np.abs(targetF_dataset))
+targetF_dataset_mag     -= targetF_dataset_mag[1]
+
+msg = runner.run(local_i, SAVE_PATH, dataset=(train_data, Stheta_distn, Etheta_distn, cosA_distn, predF_dataset_mag, targetF_dataset_mag))

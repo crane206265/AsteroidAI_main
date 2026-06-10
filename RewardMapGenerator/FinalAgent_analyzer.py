@@ -535,9 +535,8 @@ class AstEnv():
         current_cmap = cm.get_cmap('viridis').copy()
         current_cmap.set_bad(color='white')
         reward_map_img = ax6.imshow(reward_map.T, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)), cmap=current_cmap)
-        if not (sel_actions is None):
-            ax6.scatter(40*sel_actions[:, 0], 20*sel_actions[:, 1], s=80, facecolors='none', edgecolors='r')
-            ax6.scatter(40*best_action[0], 20*best_action[1], marker='*', color='gold')
+        ax6.scatter(40*sel_actions[:, 0], 20*sel_actions[:, 1], s=80, facecolors='none', edgecolors='r')
+        ax6.scatter(40*best_action[0], 20*best_action[1], marker='*', color='gold')
         ax6.set_title("(Predicted) Reward Map + Selected Actions (K=%d)"%(K))
         plt.colorbar(reward_map_img, ax=ax6, shrink=0.5)
         self._setRewardMapPlot(ax=ax6, Etheta=Etheta, Stheta=Stheta)
@@ -1122,7 +1121,7 @@ class AgentRunner():
         return msg1 + " | " + msg2       
 
 # for multiple LC   
-class MultiAgentRunner():
+class MultiAgentAnalyzer():
     def __init__(self, envs:list[AstEnv], model:QValueNet_CNN_B1):
         self.envs = envs
         self.N_LC = len(envs)
@@ -1227,7 +1226,7 @@ class MultiAgentRunner():
 
         return actions[np.nanargmax(test_rewards), :], actions
 
-    def run(self, env_i, save_path):
+    def run(self, env_i, save_path, dataset):
         # env_i : parameter for just termial printing
         #ref_ast = self.env.ast.copy()
         #self.env.ast = ref_ast.copy()
@@ -1238,14 +1237,15 @@ class MultiAgentRunner():
         reward_mode = "reward"
 
         self.reset(self.passed)
-        reward_lists = [[self.envs[i].reward0] for i in range(self.N_LC)]
+        reward_lists = [[] for _ in range(self.N_LC)]
 
         for LC_i in range(self.N_LC):
-            self.envs[LC_i].show((reward_lists[LC_i], np.zeros((40, 20)), None, None, -1),
-                                 path=save_path,
-                                 name='Env No.%02d t = %02d - %d-th LC.png'%(env_i, 0, LC_i),
-                                 reward_mode=reward_mode)
-
+            self.plotter(env=self.envs[LC_i], state=self.states[LC_i],
+                                     res_params=(reward_lists[LC_i], preds[LC_i], delta_reward_map, best_action, actions, self.K),
+                                     dataset=dataset, path=save_path,
+                                     name='Env No.%02d t = %02d - %d-th LC.png'%(env_i, 0, LC_i),
+                                     reward_mode=reward_mode)
+        
         M = 5
         for t in tqdm(range(MAX_STEPS)):
             if any(self.done):
@@ -1286,10 +1286,12 @@ class MultiAgentRunner():
             if t%1 == 0:
                 preds_T = [pred.T for pred in preds]
                 for LC_i in range(self.N_LC):
-                    self.envs[LC_i].show((reward_lists[LC_i], preds_T[LC_i], best_action, actions, self.K),
-                                         path=save_path,
-                                         name='Env No.%02d t = %02d - %d-th LC.png'%(env_i, t+1, LC_i),
-                                         reward_mode=reward_mode)
+                    delta_reward_map = self.make_map(self.envs[LC_i], reward_lists[LC_i][-1], random=False)
+                    self.plotter(env=self.envs[LC_i], state=self.states[LC_i],
+                                 res_params=(reward_lists[LC_i], preds[LC_i], delta_reward_map, best_action, actions, self.K),
+                                 dataset=dataset, path=save_path,
+                                 name='Env No.%02d t = %02d - %d-th LC.png'%(env_i, t+1, LC_i),
+                                 reward_mode=reward_mode)
                 #self.envs[0].multishow((reward_lists, preds_T, best_action, actions, self.K), path=save_path, name='Env No.%02d t = %02d.png'%(env_i, t))
             
             # 이미 고른 action 0 처리
@@ -1302,3 +1304,477 @@ class MultiAgentRunner():
         #print(msg2)
         #return msg1 + " | " + msg2      
         return ""
+    
+
+    # ---------- only for analysis ----------
+
+    def make_map(self, env:AstEnv, ref_reward, random):
+        ratio_action_set = [(0.1, 0.1)]
+        ref_ast = env.ast.copy()
+        resol = 1
+
+        rot_axis = env.initial_eps * 180/np.pi
+        rot_axis[0] = rot_axis[0]%360
+        rot_axis[1] = rot_axis[1]%180
+
+        for ratio_actions in ratio_action_set:
+            delta_map_temp = np.zeros((resol*env.Nphi, resol*env.Ntheta))
+            #print("\nGenerating Map... (at Reward="+str(int(ref_reward*100)/100)+")", end='')
+            for idx in range(env.Nphi*env.Ntheta*resol*resol):
+                i = idx//int(resol*env.Ntheta)
+                j = idx%int(resol*env.Ntheta)
+
+                if random:
+                    phi_action = (i/(resol*env.Nphi) + np.random.normal(0, 0.05, 1)[0])%1
+                    theta_action = (j/(resol*env.Ntheta) + np.random.normal(0, 0.05, 1)[0])%1
+                else:
+                    phi_action = (i/(resol*env.Nphi))%1
+                    theta_action = (j/(resol*env.Ntheta))%1
+                actions = np.array([phi_action, theta_action, ratio_actions[0], ratio_actions[1]])
+                
+                _, reward, _, _ = env.step(actions, update=False)
+                delta_map_temp[i, j] = reward - ref_reward
+                
+                env.ast = ref_ast.copy()
+        
+        return delta_map_temp
+
+    def show(self, env:AstEnv, res_params, path, name="None", reward_mode="reward"):
+        # ---------- res_params : parameters to plot, calculated from running ----------
+        reward_list = res_params[0]
+        reward_map = res_params[1]
+        best_action = res_params[2]
+        sel_actions = res_params[3]
+        K = res_params[4]
+
+        # ---------- Internal Parameter Processing ----------
+        r_arr = env.ast.pos_sph_arr[:-1, :-1, 0]
+
+        Sdir = env.lc_info[0:3]
+        Edir = env.lc_info[3:6]
+        Stheta = np.arccos(Sdir[-1]) * 20 / np.pi
+        Etheta = np.arccos(Edir[-1]) * 20 / np.pi
+
+        # ---------- Main Plotting Part ----------
+        fig = plt.figure(figsize=(15, 10), dpi=150)
+        ax1 = fig.add_subplot(2, 3, 1)                      # LC
+        ax2 = fig.add_subplot(2, 3, 2, projection='3d')     # Asteroid (View1)
+        ax3 = fig.add_subplot(2, 3, 3, projection='3d')     # Asteroid (View2)
+        ax4 = fig.add_subplot(2, 3, 4)                      # t-reward graph
+        ax5 = fig.add_subplot(2, 3, 5)                      # r_arr
+        ax6 = fig.add_subplot(2, 3, 6)                      # (predicted) reward_map + selected region
+        
+        lim_set = (-10, 10)
+        view1 = (30, -60)
+        view2 = (-30, 120)
+
+        gridX = env.ast.pos_cart_arr[:, :, 0]
+        gridY = env.ast.pos_cart_arr[:, :, 1]
+        gridZ = env.ast.pos_cart_arr[:, :, 2]
+
+        # ax1 : Lightcurves
+        ax1.plot(env.target_lc, color='coral', linestyle='solid', label='target') #black
+        ax1.plot(env.lc_pred, color='coral', linestyle='dashed', label='pred.')
+        ax1.plot(env.lc_pred0, color='gray', alpha=0.3, linestyle='dotted')
+        ax1.set_title("Lightcurve (Reward = %.2f)"%(reward_list[-1]))
+        ax1.legend()
+        ax1.set_ylim([np.min(env.target_lc)-5, np.max(env.target_lc)+5])
+
+        # ax2 : Asteroid Polyhedron (View1)
+        env._plotAsteroid(ax2, gridX, gridY, gridZ,
+                          elev=view1[0], azim=view1[1], lim_set=lim_set, lc_infos=(Sdir, Edir))
+        
+        # ax3 : Asteroid Polyhedron (View2)
+        env._plotAsteroid(ax3, gridX, gridY, gridZ,
+                          elev=view2[0], azim=view2[1], lim_set=lim_set, lc_infos=(Sdir, Edir))
+
+        # ax4 : t - reward Graph
+        if reward_mode == "reward":
+            t_last = len(reward_list)
+            ax4.plot(np.arange(t_last), reward_list, color='royalblue')
+            ax4.plot((0, t_last-1), (env.total_threshold, env.total_threshold), color='gray', alpha=0.3, linestyle='dotted')
+            ax4.set_title("t - reward Graph")
+            ax4.set_xlim((-1, max(15+1, t_last+1)))
+            ax4.set_xlabel('t')
+            ax4.set_ylabel('reward')
+        elif reward_mode == "recon":
+            t_last = len(reward_list)
+            ax4.plot(np.arange(t_last), reward_list, color='royalblue')
+            #ax4.plot((0, t_last-1), (self.total_threshold, self.total_threshold), color='gray', alpha=0.3, linestyle='dotted')
+            ax4.set_title("t - Loss Graph")
+            ax4.set_xlim((-1, max(15+1, t_last+1)))
+            ax4.set_xlabel('t')
+            ax4.set_ylabel('LC Reconstruction Loss')
+
+        # ax5 : r_arr
+        r_arr_img = ax5.imshow(r_arr.T, vmax=8, vmin=12)
+        ax5.set_title("r_arr")
+        plt.colorbar(r_arr_img, ax=ax5, shrink=0.5)
+        ax5.plot([0, 39], [Stheta, Stheta], color='orangered', label='Sun Direction', linewidth=2, linestyle='dashed')
+        ax5.plot([0, 39], [Etheta, Etheta], color='royalblue', label='Earth Direction', linewidth=2, linestyle='dashed')
+        ax5.legend()
+
+        # ax6 : (Predicted) Reward Map + Selected Actions
+        import matplotlib.cm as cm
+        current_cmap = cm.get_cmap('viridis').copy()
+        current_cmap.set_bad(color='white')
+        reward_map_img = ax6.imshow(reward_map.T, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)), cmap=current_cmap)
+        ax6.scatter(40*sel_actions[:, 0], 20*sel_actions[:, 1], s=80, facecolors='none', edgecolors='r')
+        ax6.scatter(40*best_action[0], 20*best_action[1], marker='*', color='gold')
+        ax6.set_title("(Predicted) Reward Map + Selected Actions (K=%d)"%(K))
+        plt.colorbar(reward_map_img, ax=ax6, shrink=0.5)
+        env._setRewardMapPlot(ax=ax6, Etheta=Etheta, Stheta=Stheta)
+        
+        plt.savefig(path+name)
+        #plt.show()
+        plt.close()
+
+    def plotter(self, env:AstEnv, state,
+                res_params, dataset,
+                path=None, name=None, reward_mode="reward"
+                ):
+        """
+        ## Plotter
+        **: Plots the result of the model, with monitoring informations.**
+
+        ### Contents
+        - ax1 - lightcurves
+        - ax2 - Fourier Transforms of LCs
+        - ax3 - similarity histogram
+        - ax4 - r_arr
+        - ax5 - reward_map0
+        - ax6 - reward_map (predicted by the model)
+        """
+        
+
+        r_arr = state[:800].reshape(40, 20).T
+        lc_target = state[800:900]
+        lc_pred = state[900:1000]
+        lc_info = state[1000:1006]
+
+        reward_list = res_params[0]
+        reward_map = res_params[1].T
+        reward_map0 = res_params[2].T
+        best_action = res_params[3]
+        sel_actions = res_params[4]
+        K = res_params[5]
+
+        sim_dataset = dataset[0]
+        Stheta_distn = dataset[1]
+        Etheta_distn = dataset[2]
+        cosA_distn = dataset[3]
+        predF_dataset_mag = dataset[4]
+        targetF_dataset_mag = dataset[5]
+
+        #loss = np.mean((reward_map-reward_map0)**2)
+
+        fig = plt.figure(figsize=(25, 25), dpi=200)
+        row, col = 4, 3
+        ax = [[fig.add_subplot(row, col, col*i+j) for j in range(1,col+1)] for i in range(row-1)]
+        ax.append([fig.add_subplot(row, col, col*(row-1)+j, projection='3d') for j in range(1,col+1)])
+        ax[-1][-1] = fig.add_subplot(row, col, col*(row-1)+col)
+
+        lim_set = (-10, 10)
+        view1 = (30, -60)
+        view2 = (-30, 120)
+
+        gridX = env.ast.pos_cart_arr[:, :, 0]
+        gridY = env.ast.pos_cart_arr[:, :, 1]
+        gridZ = env.ast.pos_cart_arr[:, :, 2]
+
+        Sdir = lc_info[0:3]
+        Edir = lc_info[3:6]
+        Stheta = np.arccos(Sdir[-1]) * 20 / np.pi
+        Etheta = np.arccos(Edir[-1]) * 20 / np.pi
+
+        # --------------- plot ax[0][0] ---------------
+        # ax1 : Lightcurves
+        ax[0][0].plot(env.target_lc, color='coral', linestyle='solid', label='target') #black
+        ax[0][0].plot(env.lc_pred, color='coral', linestyle='dashed', label='pred.')
+        ax[0][0].plot(env.lc_pred0, color='gray', alpha=0.3, linestyle='dotted')
+        ax[0][0].set_title("Lightcurve (Reward = %.2f)"%(reward_list[-1]))
+        ax[0][0].legend()
+        ax[0][0].set_ylim([np.min(env.target_lc)-5, np.max(env.target_lc)+5])
+
+        # --------------- plot ax[0][1] ---------------
+        # Fourier Transforms of LCs
+        fft_coef_zip_target = np.abs(np.fft.fft(lc_target))[1:lc_target.shape[0]//2+1]
+        fft_coef_zip_target = np.log10(fft_coef_zip_target)
+        fft_coef_zip_pred = np.abs(np.fft.fft(lc_pred))[1:lc_pred.shape[0]//2+1]
+        fft_coef_zip_pred = np.log10(fft_coef_zip_pred)
+        lim = (np.min(fft_coef_zip_target)-0.3, np.max(fft_coef_zip_target)+0.3)
+
+        ax[0][1].plot(fft_coef_zip_target, color='orangered')
+        ax[0][1].plot(fft_coef_zip_pred, color='royalblue')
+        ax[0][1].plot([np.argmax(fft_coef_zip_target), np.argmax(fft_coef_zip_target)], [lim[0], lim[1]], linestyle='dotted', color='gray')
+        ax[0][1].set_title("FFT of LC")
+        ax[0][1].set_ylim(lim[0], lim[1])
+
+        # --------------- plot ax[1][0] ---------------
+        # r_arr
+        r_arr_img = ax[1][0].imshow(r_arr, vmax=8, vmin=12)
+        ax[1][0].set_title("R_arr")
+        plt.colorbar(r_arr_img, ax=ax[1][0], shrink=0.75)
+        ax[1][0].plot([0, 39], [Stheta, Stheta], color='orangered', label='Sun Direction', linewidth=2, linestyle='dashed')
+        ax[1][0].plot([0, 39], [Etheta, Etheta], color='royalblue', label='Earth Direction', linewidth=2, linestyle='dashed')
+        ax[1][0].legend()
+
+        # --------------- plot ax[1][1] ---------------
+        # ax4 : t - reward Graph
+        if reward_mode == "reward":
+            t_last = len(reward_list)
+            ax[1][1].plot(np.arange(t_last), reward_list, color='royalblue')
+            ax[1][1].plot((0, t_last-1), (env.total_threshold, env.total_threshold), color='gray', alpha=0.3, linestyle='dotted')
+            ax[1][1].set_title("t - reward Graph")
+            ax[1][1].set_xlim((-1, max(15+1, t_last+1)))
+            ax[1][1].set_xlabel('t')
+            ax[1][1].set_ylabel('reward')
+        elif reward_mode == "recon":
+            t_last = len(reward_list)
+            ax[1][1].plot(np.arange(t_last), reward_list, color='royalblue')
+            #ax4.plot((0, t_last-1), (self.total_threshold, self.total_threshold), color='gray', alpha=0.3, linestyle='dotted')
+            ax[1][1].set_title("t - Loss Graph")
+            ax[1][1].set_xlim((-1, max(15+1, t_last+1)))
+            ax[1][1].set_xlabel('t')
+            ax[1][1].set_ylabel('LC Reconstruction Loss')
+
+        # --------------- plot ax[2][0] ---------------
+        # reward_map0
+        reward_map0_img = ax[2][0].imshow(reward_map0, vmax=np.max(np.abs(reward_map0)), vmin=-np.max(np.abs(reward_map0)))#, vmax=6, vmin=-6)
+        ax[2][0].set_title("Reward_Map (ref_reward="+str(int(state[-1]*100)/100)+")")
+        plt.colorbar(reward_map0_img, ax=ax[2][0], shrink=0.75)
+        self._setRewardMapPlot(ax=ax[2][0], Etheta=Etheta, Stheta=Stheta)
+
+        # --------------- plot ax[2][1] ---------------
+        # ax6 : (Predicted) Reward Map + Selected Actions
+        import matplotlib.cm as cm
+        current_cmap = cm.get_cmap('viridis').copy()
+        current_cmap.set_bad(color='white')
+        reward_map_img = ax[2][1].imshow(reward_map.T, vmax=np.max(np.abs(reward_map)), vmin=-np.max(np.abs(reward_map)), cmap=current_cmap)
+        ax[2][1].scatter(40*sel_actions[:, 0], 20*sel_actions[:, 1], s=80, facecolors='none', edgecolors='r')
+        ax[2][1].scatter(40*best_action[0], 20*best_action[1], marker='*', color='gold')
+        ax[2][1].set_title("(Predicted) Reward Map + Selected Actions (K=%d)"%(K))
+        plt.colorbar(reward_map_img, ax=ax[2][1], shrink=0.5)
+        self._setRewardMapPlot(ax=ax[2][1], Etheta=Etheta, Stheta=Stheta)
+
+        # --------------- plot ax[3][0] ---------------
+        # ax2 : Asteroid Polyhedron (View1)
+        env._plotAsteroid(ax[3][0], gridX, gridY, gridZ,
+                          elev=view1[0], azim=view1[1], lim_set=lim_set, lc_infos=(Sdir, Edir))
+
+        # --------------- plot ax[3][1] ---------------
+        # ax3 : Asteroid Polyhedron (View2)
+        env._plotAsteroid(ax[3][1], gridX, gridY, gridZ,
+                          elev=view2[0], azim=view2[1], lim_set=lim_set, lc_infos=(Sdir, Edir))
+
+        # =============== Similarity Plot ===============
+        # --------------- plot ax[0][2] ---------------
+        # r_arr similarity histogram
+        rArrSim_arr = self.rArrSim(r_arr, sim_dataset)
+        ax[0][2].hist(rArrSim_arr, bins=np.linspace(0, 100, 51), color='orange', alpha=0.5, label='Similarity Histogram')
+        ax[0][2].set_xticks(np.linspace(0, 100, 11))
+        ax[0][2].set_xlabel('Similarity (MSE)')
+        ax[0][2].set_ylabel('Frequency')
+        title = "r_arr Self-Similarity Histogram"
+        ax[0][2].set_title(title)
+
+        # --------------- plot ax[1][2] ---------------
+        # direction distribution histogram
+        Stheta_norm = Stheta/20
+        Etheta_norm = Etheta/20
+        cosA_norm   = (np.einsum('i,i->', Sdir, Edir) + 1) / 2
+        ax[1][2].hist(Stheta_distn, bins=np.linspace(0, 1, 51), color='orangered', alpha=0.4, label='Stheta')
+        ax[1][2].hist(Etheta_distn, bins=np.linspace(0, 1, 51), color='royalblue', alpha=0.4, label='Etheta')
+        ax[1][2].hist(cosA_distn,   bins=np.linspace(0, 1, 51), color='gold',      alpha=0.4, label='cosA')
+        ylim12 = ax[1][2].set_ylim()
+        ax[1][2].plot([Stheta_norm]*2, ylim12, color='orangered')
+        ax[1][2].plot([Etheta_norm]*2, ylim12, color='royalblue')
+        ax[1][2].plot([cosA_norm]*2,   ylim12, color='gold')
+        ax[1][2].legend()
+        ax[1][2].set_xticks(np.linspace(0, 1, 11))
+        ax[1][2].set_xlabel('[0, 1] Normalized Direction')
+        ax[1][2].set_ylabel('Frequency')
+        title = "dir Self-Distribution Histogram"
+        ax[1][2].set_title(title)
+
+        # --------------- plot ax[2][2] ---------------
+        # LC similarity histogram
+        delta_lc_sim, predF_mag_sim, targetF_mag_sim, delta_lc_sim_dataset = self.LCSim(lc_pred, lc_target, (sim_dataset, predF_dataset_mag, targetF_dataset_mag))
+
+        ax[2][2].hist(delta_lc_sim_dataset, bins=np.linspace(0, 2.0, 33), color='orange', alpha=0.5)
+        ylim22 = ax[2][2].set_ylim()
+        ax[2][2].plot([delta_lc_sim]*2, ylim22, color='orange')
+        ax[2][2].set_xticks(np.linspace(0, 2.0, 11))
+        ax[2][2].set_xlabel('Similarity (MSE)')
+        ax[2][2].set_ylabel('Frequency')
+        title = "delta_LC_sim Self-Distribution Histogram"
+        ax[2][2].set_title(title)
+
+        # --------------- plot ax[3][2] ---------------
+        ax[3][2].hist(predF_mag_sim, bins=np.linspace(0.8, 4.0, 33), color='royalblue', alpha=0.3, label='predF_mag_sim')
+        ax[3][2].hist(targetF_mag_sim, bins=np.linspace(0.8, 4.0, 33), color='orangered', alpha=0.6, label='targetF_mag_sim')
+        ax[3][2].legend()
+        ax[3][2].set_xticks(np.linspace(0.8, 4.0, 9))
+        ax[3][2].set_xlabel('Similarity (MSE)')
+        ax[3][2].set_ylabel('Frequency')
+        title = "targetF_mag Self-Similarity Histogram"
+        ax[3][2].set_title(title)
+
+        fig.tight_layout()
+        #plt.show()
+        #plt.savefig(save_path+"img{:03d}.png".format(idx))
+        plt.savefig(path+name)
+        plt.close()
+        
+    def _setRewardMapPlot(self, ax:plt.Axes, Etheta, Stheta, extends=(0, 0)):
+        """
+        Draw optional informations for reward_map type plotting to ax
+        """
+        ax.plot([0, 40*(extends[1]+1)-1], [Etheta*(extends[0]+1), Etheta*(extends[0]+1)], color='royalblue', label='Earth Direction', linewidth=2, linestyle='dashed')
+        ax.plot([0, 40*(extends[1]+1)-1], [Stheta*(extends[0]+1), Stheta*(extends[0]+1)], color='orangered', label='Sun Direction', linewidth=2, linestyle='dashed')
+        ax.plot([20*extends[1], 20*extends[1]+40], [10*extends[0], 10*extends[0]], color='gold', linewidth=0.8, linestyle='dotted')
+        ax.plot([20*extends[1], 20*extends[1]+40], [10*extends[0]+20, 10*extends[0]+20], color='gold', linewidth=0.8, linestyle='dotted')
+        ax.plot([20*extends[1], 20*extends[1]], [10*extends[0], 10*extends[0]+20], color='gold', linewidth=0.8, linestyle='dotted')
+        ax.plot([20*extends[1]+40, 20*extends[1]+40], [10*extends[0], 10*extends[0]+20], color='gold', linewidth=0.8, linestyle='dotted')
+        ax.set_xlim([0-0.5, 40-0.5])
+        ax.set_ylim([20-0.5, 0-0.5])
+
+    # -------------------- Similarity Functions --------------------
+    # Similarity Function
+    def RMSE_Roll_r_sim(self, pred_img, target_img):
+        # Optimized Version by GPT (26.01.12)
+        """
+        ## RMSE_Roll_r_sim
+        **: calculate similiarity with RMSE-based mechanism. Rolling the target image, select the minimum loss.**
+
+        ### Input
+        - pred_img
+        - target_img
+
+        ### Output
+        - similarity
+        - roll_idx for similarity
+        """
+
+        # flatten along longitude (roll axis)
+        P = pred_img.reshape(-1)
+        T = target_img.reshape(-1)
+
+        # FFT-based circular cross-correlation
+        fftP = np.fft.fft(P)
+        fftT = np.fft.fft(T)
+        corr = np.fft.ifft(fftP * np.conj(fftT)).real
+
+        # MSE for each roll
+        mse = (np.sum(P**2) + np.sum(T**2) - 2*corr) / P.size
+        sims = np.sqrt(mse + 1e-8) * 100
+
+        return np.min(sims), np.argmin(sims)
+
+    def rArrSim(self, r_arr, dataset):
+        # Optimized Version by GPT (26.01.12)
+        """
+        ## rArrSim
+        **: calculate similiarity array for given r_arr and dataset**
+
+        ### Input
+        - r_arr : target r_arr for similairity calculation
+        - dataset : objective dataset - the function will calculate similairty btw r_arr(input) and r_arr's in this dataset
+        - idx
+        - self_sim : set True if dataset contains r_arr (i.e. calculating self-similarity)
+
+        ### Output
+        - similarity_arr : 1D array of similarities (for plotting histogram)
+            - len = (dataset.shape[0]//800)
+        """
+
+        block_size = 800
+        num_blocks = dataset.shape[0] // block_size
+        similarity_arr = np.zeros(num_blocks)
+
+        mean0 = 5
+        r_arr_norm = r_arr * mean0 / np.mean(r_arr)
+
+        for j in range(num_blocks):
+            r_arr_dataset = dataset[j*block_size, :block_size].reshape(40, 20).T
+            r_arr_dataset = r_arr_dataset * mean0 / np.mean(r_arr_dataset)
+
+            similarity, roll_idx = self.RMSE_Roll_r_sim(r_arr_norm, r_arr_dataset)
+            similarity_arr[j] = similarity
+
+        return similarity_arr
+
+    def dirDistn(self, dataset):
+        """
+        ## dirSim
+        **: calculate distribution array for given dir(direction data) and dataset**
+
+        ### Input
+        - dataset : objective dataset - the function will calculate similairty btw dir(input) and dir's in this dataset
+        - idx
+        - self_sim : set True if dataset contains dir (i.e. calculating self-similarity)
+
+        ### Output
+        - Stheta_distn : 1D array of latitude of Sdirs (for plotting histogram)
+        - Etheta_distn : 1D array of latitude of Edirs (for plotting histogram)
+        - cosA_distn : 1D array of latitude of cosAs (for plotting histogram)
+            - cosA : cosine value of A, the angle btw. Sdir and Edir
+            - len = (dataset.shape[0]//800)
+        """
+
+        block_idx = np.arange(0, dataset.shape[0], 800)
+        N = len(block_idx)
+
+        Sdir = dataset[block_idx, 1000:1003]
+        Edir = dataset[block_idx, 1003:1006]
+        Stheta_distn = np.arccos(Sdir[:, -1]) / np.pi
+        Etheta_distn = np.arccos(Edir[:, -1]) / np.pi
+        cosA_distn   = (np.einsum('ij,ij->i', Sdir, Edir) + 1) / 2
+
+        return Stheta_distn, Etheta_distn, cosA_distn
+
+    def LCSim(self, lc_pred, lc_target, dataset_list):
+        """
+        ## LCSim
+        **: calculate similiarity array for given LCs and dataset**
+
+        ### Input
+        - lc_pred : target lc_pred for similairity calculation
+        - lc_target : target lc_target for similairity calculation
+        - dataset : objective dataset - the function will calculate similairty btw LCs(input) and LC's in this dataset
+        - idx
+        - self_sim : set True if dataset contains LCs (i.e. calculating self-similarity)
+
+        ### Output
+        - similarity_arr : 1D array of similarities (for plotting histogram)
+            - len = (dataset.shape[0]//800)
+        """
+        dataset = dataset_list[0]
+        predF_dataset_mag = dataset_list[1]
+        targetF_dataset_mag = dataset_list[2]
+
+        block_idx = np.arange(0, dataset.shape[0], 800)
+        N = len(block_idx)
+
+        predF           = np.fft.fft(lc_pred)[1:lc_pred.shape[0]//2+1]
+        targetF         = np.fft.fft(lc_target)[1:lc_target.shape[0]//2+1]
+        predF_mag       = np.log10(np.abs(predF))
+        predF_mag       -= predF_mag[1]
+        targetF_mag     = np.log10(np.abs(targetF))
+        targetF_mag     -= targetF_mag[1]
+
+        # F_mag similarity weight
+        weight = 1/(np.arange(1, predF_mag.shape[-1]+1)**1)
+        weight[1] = 1
+
+        delta_lc_sim_dataset = np.average((predF_dataset_mag - targetF_dataset_mag)**2, weights=weight, axis=-1)**0.5
+
+        # delta_lc similarity
+        delta_lc_sim = np.average((predF_mag - targetF_mag)**2, weights=weight, axis=-1)**0.5
+
+        # lc-FFT similarity
+        predF_mag_sim   = np.average((predF_mag - predF_dataset_mag)**2,     weights=weight, axis=-1)**0.5
+        targetF_mag_sim = np.average((targetF_mag - targetF_dataset_mag)**2, weights=weight, axis=-1)**0.5
+
+        return delta_lc_sim, predF_mag_sim, targetF_mag_sim, delta_lc_sim_dataset
+

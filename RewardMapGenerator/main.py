@@ -16,7 +16,7 @@ from envs import AstEnv, GenRunner
 
 #################### Settings ####################
 prefix = ""
-#prefix = "ideal_"
+prefix = "ideal_"
 save_path_suffix = ""
 save_path_suffix = "RL_domain1/"
 
@@ -110,8 +110,8 @@ def run_one(local_i):
 
 def main():
     # ---- Range of global indices to compute ----
-    start_idx = 312#600      # inclusive
-    final_idx = 500#1000     # exclusive (global index)
+    start_idx = 0#312#600      # inclusive
+    final_idx = 300#500#1000     # exclusive (global index)
     num_samples = final_idx - start_idx
 
     # Number of worker processes (tune according to your CPU)
